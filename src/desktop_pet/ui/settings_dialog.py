@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from ..behaviors import DEFAULT_BEHAVIORS
 from ..behaviors.autonomy import MODE_LABELS
+from ..rig.body_parts import BODY_STYLES
 from ..platform.autostart import set_start_on_login
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -62,6 +63,17 @@ class SettingsDialog(QDialog):
     def _appearance_group(self) -> QWidget:
         box = QGroupBox("Appearance")
         form = QFormLayout(box)
+
+        self.style_combo = QComboBox()
+        for style_name, style_def in BODY_STYLES.items():
+            self.style_combo.addItem(style_def["label"], style_name)
+        idx = self.style_combo.findData(self.config.body_style)
+        self.style_combo.setCurrentIndex(max(0, idx))
+        self.style_combo.setToolTip(
+            "Body proportions for characters drawn from shapes. Imported "
+            "picture characters keep their own proportions."
+        )
+        form.addRow("Look", self.style_combo)
 
         self.scale_spin = QDoubleSpinBox()
         self.scale_spin.setRange(0.3, 4.0)
@@ -202,6 +214,8 @@ class SettingsDialog(QDialog):
         cfg.creep_speed = self.creep_spin.value()
         cfg.autonomy_min = self.autonomy_min.value()
         cfg.autonomy_max = max(self.autonomy_max.value(), self.autonomy_min.value())
+        new_style = self.style_combo.currentData() or "cute"
+        style_changed = new_style != cfg.body_style
         cfg.mode = self.mode_combo.currentData() or "free"
         cfg.follow_cursor = cfg.mode == "follow"
         cfg.climb_chance = self.climb_chance_spin.value()
@@ -221,6 +235,8 @@ class SettingsDialog(QDialog):
         self.app.timer.setInterval(max(8, int(1000 / max(1, cfg.fps))))
         for pet in self.app.pets:
             pet.body.gravity_enabled = cfg.gravity_enabled
+        if style_changed:
+            self.app.set_body_style(new_style)
         self._match_pet_count(self.count_spin.value())
         set_start_on_login(cfg.start_on_login)
 

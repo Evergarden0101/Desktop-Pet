@@ -28,10 +28,10 @@ class LoadedCharacter:
     phrases: Optional[Dict[str, list]] = None
 
 
-def _build_skeleton(pack: CharacterPack) -> Skeleton:
+def _build_skeleton(pack: CharacterPack, style: Optional[str]) -> Skeleton:
     if pack.skeleton:
         return build_skeleton(specs_from_json(pack.skeleton))
-    return default_skeleton()
+    return default_skeleton(style)
 
 
 def _wants_images(pack: CharacterPack) -> bool:
@@ -43,9 +43,21 @@ def _wants_images(pack: CharacterPack) -> bool:
     return pack.has_texture  # auto
 
 
-def load_character(pack: CharacterPack, use_cache: bool = True) -> LoadedCharacter:
-    skeleton = _build_skeleton(pack)
+def load_character(
+    pack: CharacterPack,
+    use_cache: bool = True,
+    default_style: Optional[str] = None,
+) -> LoadedCharacter:
+    """Build a runnable character.
+
+    ``default_style`` is the user's preferred body style (``AppConfig.body_style``)
+    and applies only when the pack doesn't pin one itself, so a character author
+    can force "human" proportions while everyone else stays cute.
+    """
     render = dict(pack.render)
+    style = render.get("style") or default_style
+    render["style"] = style
+    skeleton = _build_skeleton(pack, style)
     parts: Dict[str, BodyPart] = {}
 
     if _wants_images(pack):

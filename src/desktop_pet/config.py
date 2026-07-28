@@ -70,6 +70,9 @@ def user_characters_dir() -> str:
 class AppConfig:
     # Appearance / scale
     character: str = "default"
+    #: Body proportions for shape-drawn characters: "cute" (chibi) or "human".
+    #: A character pack may override this with its own ``render.style``.
+    body_style: str = "cute"
     scale: float = 1.0
     opacity: float = 1.0
     always_on_top: bool = True

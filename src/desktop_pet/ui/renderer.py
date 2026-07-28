@@ -24,7 +24,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, Q
 from ..core.geometry import Vec2
 from ..core.pet import Pet
 from ..core.skeleton import Skeleton
-from ..rig.body_parts import z_ordered_bone_names
+from ..rig.body_parts import style_config, z_ordered_bone_names
 
 # Capsule half-thickness per part (rig units, multiplied by scale). Tuned so
 # the silhouette reads as a human body: shoulders/chest widest, limbs tapering
@@ -51,12 +51,25 @@ class PetRenderer:
     def __init__(self, render_cfg: Optional[dict] = None):
         self.render_cfg = render_cfg or {"mode": "shapes"}
         self.mode = self.render_cfg.get("mode", "shapes")
+        # Body style drives limb thickness, head size and how big the eyes are.
+        self.style = style_config(self.render_cfg.get("style"))
         self._pixmaps: Dict[str, QPixmap] = {}
+        self._axes: Dict[str, tuple] = {}
         self._pixmaps_built = False
 
+    def _radius_for(self, part: str) -> float:
+        radii = self.style.get("radii", {})
+        return radii.get(part, _PART_RADIUS.get(part, 7.0))
+
     # ------------------------------------------------------------- pixmaps
-    def set_part_pixmaps(self, pixmaps: Dict[str, QPixmap]) -> None:
+    def set_part_pixmaps(self, pixmaps: Dict[str, QPixmap], axes=None) -> None:
+        """Attach part sprites and, optionally, their ``(pivot, anchor)`` axes.
+
+        Without axes the renderer falls back to sensible defaults per part name,
+        which keeps older packs working.
+        """
         self._pixmaps = pixmaps
+        self._axes = axes or {}
         self._pixmaps_built = True
 
     def _effective_mode(self, pet: Pet) -> str:
@@ -87,23 +100,47 @@ class PetRenderer:
             pixmap = self._pixmaps.get(part)
             if pixmap is None or pixmap.isNull():
                 continue
-            self._draw_part_pixmap(painter, bone, pixmap, scale)
+            self._draw_part_pixmap(painter, bone, pixmap, scale, part)
 
-    def _draw_part_pixmap(self, painter, bone, pixmap: QPixmap, scale: float) -> None:
-        # Map the sprite's pivot onto the bone joint and align its long axis
-        # (pivot -> child_anchor, nominally +Y) with the bone's world direction.
+    def _draw_part_pixmap(self, painter, bone, pixmap: QPixmap, scale: float, part: str) -> None:
+        """Place a sprite so its axis lines up with the bone.
+
+        The sprite carries two normalized points: ``pivot`` (which sits on the
+        bone's near joint) and ``anchor`` (which sits on its far end). Mapping
+        pivot -> ``bone.world_pos`` and anchor -> the bone tip gives the rotation
+        *and* the scale, and works for parts whose art runs backwards along the
+        bone - notably the head, whose joint is at the chin while the skull
+        extends the other way.
+        """
         pw, ph = pixmap.width(), pixmap.height()
-        pivot_px = QPointF(bone.pivot.x * pw, bone.pivot.y * ph)
-        span = max(1e-3, (0.9 - bone.pivot.y)) * ph  # sprite units along the bone
-        target = bone.length * scale
-        s = target / span
+        pivot_n, anchor_n = self._axis_for(part)
+
+        pivot_px = Vec2(pivot_n[0] * pw, pivot_n[1] * ph)
+        anchor_px = Vec2(anchor_n[0] * pw, anchor_n[1] * ph)
+        sprite_axis = anchor_px - pivot_px
+        sprite_len = sprite_axis.length()
+        if sprite_len < 1e-6:
+            return
+
+        target_len = bone.length * scale
+        s = target_len / sprite_len
+        # Rotate the sprite's own axis onto the bone's direction.
+        rotation = bone.world_angle - sprite_axis.angle()
 
         painter.save()
         painter.translate(bone.world_pos.x, bone.world_pos.y)
-        painter.rotate(math.degrees(bone.world_angle - math.pi / 2))
+        painter.rotate(math.degrees(rotation))
         painter.scale(s, s)
-        painter.drawPixmap(QPointF(-pivot_px.x(), -pivot_px.y()), pixmap)
+        painter.drawPixmap(QPointF(-pivot_px.x, -pivot_px.y), pixmap)
         painter.restore()
+
+    def _axis_for(self, part: str):
+        axis = self._axes.get(part)
+        if axis is not None:
+            return axis
+        from ..rig.extractor import part_axis
+
+        return part_axis(part)
 
     # --------------------------------------------------------- shape mode
     def _draw_shapes(self, painter: QPainter, pet: Pet) -> None:
@@ -112,7 +149,7 @@ class PetRenderer:
         cfg = self.render_cfg
         palette = cfg.get("palette", {})
         outline = QColor(cfg.get("outline", "#2b2b3a"))
-        outline_w = float(cfg.get("outline_width", 3.0))
+        outline_w = float(cfg.get("outline_width", self.style.get("outline_width", 3.0)))
 
         torso_z = skeleton.bones["torso"].z_order if "torso" in skeleton.bones else 6
         for name in z_ordered_bone_names(skeleton):
@@ -126,7 +163,7 @@ class PetRenderer:
             # shapeless mass; shading reads instantly as "far side".
             if bone.z_order < torso_z:
                 color = color.darker(128)
-            base_r = _PART_RADIUS.get(part, 7.0) * scale
+            base_r = self._radius_for(part) * scale
             start_r, end_r = self._limb_radii(part, base_r)
             self._tapered_limb(
                 painter,
@@ -223,7 +260,7 @@ class PetRenderer:
         base = head.world_pos
         tip = skeleton.tip_scaled_of("head")
         center = Vec2((base.x + tip.x) / 2, (base.y + tip.y) / 2)
-        radius = head.length * 0.55 * scale
+        radius = head.length * float(self.style.get("head_ratio", 0.55)) * scale
 
         pen = QPen(outline)
         pen.setWidthF(outline_w)
@@ -245,29 +282,92 @@ class PetRenderer:
         # Slightly taller than wide, like a real skull.
         painter.drawEllipse(QPointF(center.x, center.y), radius * 0.92, radius)
 
-        # Face oriented toward the facing direction. Both eyes sit on the
-        # forward side of the head so the pet reads as looking where it walks.
         face_cfg = self.render_cfg.get("face", {})
+        fx = pet.facing
+        # Roll the face with the head so it stays glued on while lying down.
+        roll = head.world_angle + math.pi / 2
+
+        def face_point(dx: float, dy: float) -> QPointF:
+            """Head-local offset -> world point (dx is along the facing axis)."""
+            local = Vec2(dx * fx, dy).rotated(roll)
+            return QPointF(center.x + local.x, center.y + local.y)
+
+        self._draw_hair(painter, center, radius, roll, fx, face_cfg, outline, outline_w)
+
+        eye_scale = float(face_cfg.get("eye_scale", self.style.get("eye_scale", 1.0)))
         eye_color = QColor(face_cfg.get("eye_color", "#2b2b3a"))
         cheek_color = QColor(face_cfg.get("cheek_color", "#ff9e9e"))
-        fx = pet.facing
-        eye_dx = radius * 0.34
-        eye_dy = -radius * 0.08
-        eye_r = max(1.4, radius * 0.11)
+        eye_dx = radius * 0.33
+        eye_dy = radius * 0.06
+        eye_rx = max(1.3, radius * 0.10 * eye_scale)
+        eye_ry = eye_rx * 1.22
 
         painter.setPen(Qt.NoPen)
+        # Blush on the cheek, forward of the eyes.
         painter.setBrush(QBrush(cheek_color))
-        painter.drawEllipse(
-            QPointF(center.x + fx * eye_dx * 1.2, center.y + radius * 0.34),
-            eye_r * 1.4,
-            eye_r,
+        painter.drawEllipse(face_point(eye_dx * 1.35, radius * 0.36), eye_rx * 0.95, eye_rx * 0.62)
+        painter.drawEllipse(face_point(-eye_dx * 0.25, radius * 0.38), eye_rx * 0.8, eye_rx * 0.55)
+
+        for side in (1.0, 0.05):  # far eye sits nearer the centre line
+            eye_at = face_point(eye_dx * side, eye_dy)
+            painter.setBrush(QBrush(eye_color))
+            painter.drawEllipse(eye_at, eye_rx, eye_ry)
+            if eye_scale > 1.2:
+                # Cute style: a highlight and a lower glint make the eyes sparkle.
+                painter.setBrush(QBrush(QColor("#ffffff")))
+                painter.drawEllipse(
+                    QPointF(eye_at.x() + eye_rx * 0.34 * fx, eye_at.y() - eye_ry * 0.36),
+                    eye_rx * 0.36,
+                    eye_rx * 0.36,
+                )
+                painter.setBrush(QBrush(QColor(255, 255, 255, 190)))
+                painter.drawEllipse(
+                    QPointF(eye_at.x() - eye_rx * 0.28 * fx, eye_at.y() + eye_ry * 0.38),
+                    eye_rx * 0.19,
+                    eye_rx * 0.19,
+                )
+
+        # A small smile between and below the eyes.
+        smile_pen = QPen(eye_color)
+        smile_pen.setWidthF(max(1.2, radius * 0.055))
+        smile_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(smile_pen)
+        painter.setBrush(Qt.NoBrush)
+        mouth = face_point(eye_dx * 0.55, radius * 0.42)
+        mouth_r = radius * 0.17
+        painter.drawArc(
+            QRectF(mouth.x() - mouth_r, mouth.y() - mouth_r, mouth_r * 2, mouth_r * 2),
+            180 * 16,
+            180 * 16,
         )
 
-        painter.setBrush(QBrush(eye_color))
-        painter.drawEllipse(QPointF(center.x + fx * eye_dx, center.y + eye_dy), eye_r, eye_r * 1.3)
-        painter.drawEllipse(
-            QPointF(center.x + fx * eye_dx * 0.15, center.y + eye_dy), eye_r, eye_r * 1.3
-        )
+    def _draw_hair(self, painter, center, radius, roll, fx, face_cfg, outline, outline_w) -> None:
+        """A simple hair cap over the top of the skull.
+
+        Drawn as a clipped ellipse so it hugs the head at any angle; skipped
+        entirely when the character sets ``hair_color`` to ``none``.
+        """
+        hair_color = face_cfg.get("hair_color", "#4a3b2f")
+        if not hair_color or hair_color == "none":
+            return
+
+        cap = QPainterPath()
+        cap.addEllipse(QPointF(center.x, center.y), radius * 0.94, radius * 1.02)
+        # Cut away everything below the hairline (in head-local space).
+        cut = QPainterPath()
+        line_offset = -radius * 0.18
+        p0 = Vec2(-radius * 1.6, line_offset).rotated(roll)
+        p1 = Vec2(radius * 1.6, line_offset).rotated(roll)
+        down = Vec2(0.0, radius * 2.4).rotated(roll)
+        cut.moveTo(center.x + p0.x, center.y + p0.y)
+        cut.lineTo(center.x + p1.x, center.y + p1.y)
+        cut.lineTo(center.x + p1.x + down.x, center.y + p1.y + down.y)
+        cut.lineTo(center.x + p0.x + down.x, center.y + p0.y + down.y)
+        cut.closeSubpath()
+
+        painter.setPen(QPen(outline, outline_w * 0.8))
+        painter.setBrush(QBrush(QColor(hair_color)))
+        painter.drawPath(cap.subtracted(cut))
 
     @staticmethod
     def _thick_line(painter, a: Vec2, b: Vec2, radius: float) -> None:

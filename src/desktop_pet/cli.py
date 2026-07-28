@@ -116,6 +116,7 @@ def cmd_extract(
         source_image=texture_name,
         scale=scale,
         extraction={"method": "regions", "regions": result.to_regions_dict()},
+        skeleton=result.skeleton or [],
         render={"mode": "image"},
     )
     pack.save_manifest()

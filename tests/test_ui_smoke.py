@@ -293,3 +293,94 @@ def test_tick_survives_backend_failures(qapp):
         assert app.backend.calls >= 30
     finally:
         app.shutdown()
+
+
+def test_body_style_switch_rebuilds_pets(qapp):
+    """Switching cute/human must rebuild the rig and keep pets on the floor."""
+    from desktop_pet.rig.body_parts import BODY_STYLES
+
+    app = _make_app(qapp)
+    try:
+        for style in BODY_STYLES:
+            app.set_body_style(style)
+            _run_frames(app, 20)
+            assert app.config.body_style == style
+            pet = app.pets[0]
+            floor = pet.env.world_floor()
+            assert pet.feet_y() <= floor + 2
+            # The renderer must be using that style's proportions.
+            assert app.renderers[pet.pet_id].style is BODY_STYLES[style]
+    finally:
+        app.shutdown()
+
+
+def test_imported_character_renders_in_image_mode(qapp, tmp_path, monkeypatch):
+    """An imported picture character should draw actual pixels, upright."""
+    pytest.importorskip("PIL")
+    from PIL import Image, ImageDraw
+    from PySide6.QtGui import QImage, QPainter
+
+    import desktop_pet.characters as characters_mod
+    import desktop_pet.config as config_mod
+
+    user_dir = tmp_path / "chars"
+    user_dir.mkdir()
+    monkeypatch.setattr(characters_mod, "user_characters_dir", lambda: str(user_dir))
+    monkeypatch.setattr(config_mod, "user_characters_dir", lambda: str(user_dir))
+
+    src = tmp_path / "hero.png"
+    img = Image.new("RGBA", (200, 460), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    cx = 100
+    d.ellipse([cx - 30, 16, cx + 30, 78], fill=(255, 217, 160, 255))
+    d.rectangle([cx - 10, 74, cx + 10, 92], fill=(255, 217, 160, 255))
+    d.rounded_rectangle([cx - 44, 90, cx + 44, 220], 14, fill=(79, 140, 255, 255))
+    d.rounded_rectangle([cx - 40, 216, cx + 40, 258], 10, fill=(47, 53, 80, 255))
+    d.rounded_rectangle([cx - 36, 256, cx - 6, 420], 10, fill=(47, 53, 80, 255))
+    d.rounded_rectangle([cx + 6, 256, cx + 36, 420], 10, fill=(47, 53, 80, 255))
+    img.save(src)
+
+    info = characters_mod.import_character(str(src), "Hero")
+
+    app = _make_app(qapp)
+    try:
+        from desktop_pet.config import CharacterPack
+        from desktop_pet.rig.loader import load_character
+        from desktop_pet.ui.imaging import pil_to_qpixmap
+        from desktop_pet.ui.renderer import PetRenderer
+
+        loaded = load_character(CharacterPack.load(info.directory))
+        assert loaded.render["mode"] == "image"
+        assert loaded.parts
+
+        renderer = PetRenderer(loaded.render)
+        renderer.set_part_pixmaps(
+            {n: pil_to_qpixmap(p.image) for n, p in loaded.parts.items() if p.image},
+            {
+                n: ((p.pivot.x, p.pivot.y), (p.child_anchor.x, p.child_anchor.y))
+                for n, p in loaded.parts.items()
+                if p.image
+            },
+        )
+
+        pet = app.pets[0]
+        pet.skeleton = loaded.skeleton
+        pet.skeleton.root_position = pet.position
+        pet.skeleton.solve()
+
+        canvas = QImage(500, 500, QImage.Format_ARGB32)
+        canvas.fill(0)
+        painter = QPainter(canvas)
+        painter.translate(-pet.position.x + 250, -pet.position.y + 250)
+        renderer.draw(painter, pet)
+        painter.end()
+
+        painted = sum(
+            1
+            for x in range(0, 500, 5)
+            for y in range(0, 500, 5)
+            if canvas.pixelColor(x, y).alpha() > 0
+        )
+        assert painted > 20, "image character drew almost nothing"
+    finally:
+        app.shutdown()

@@ -1,8 +1,10 @@
 import math
 
+import pytest
+
 from desktop_pet.core.geometry import Vec2
 from desktop_pet.core.skeleton import Bone, Skeleton
-from desktop_pet.rig.body_parts import default_skeleton
+from desktop_pet.rig.body_parts import BODY_STYLES, default_skeleton
 from desktop_pet.rig.skeleton_utils import stand_offset_of
 
 
@@ -55,21 +57,38 @@ def test_two_bone_ik_out_of_range_stretches():
     assert tip.normalized().distance_to(Vec2(1, 0)) < 1e-3
 
 
-def test_default_humanoid_stands_upright():
-    sk = default_skeleton()
+@pytest.mark.parametrize("style", sorted(BODY_STYLES))
+def test_humanoid_styles_stand_upright(style):
+    """Every body style must rest with the head up and both feet below the root."""
+    sk = default_skeleton(style)
     sk.root_position = Vec2(0, 0)
     sk.solve()
-    # Head should be above the root (negative Y), feet below (positive Y).
-    assert sk.tip_scaled_of("head").y < -50
-    assert sk.tip_scaled_of("foot_l").y > 50
-    assert sk.tip_scaled_of("foot_r").y > 50
+    head_tip = sk.tip_scaled_of("head").y
+    assert head_tip < -20, "head should be above the pelvis"
+    for foot in ("foot_l", "foot_r"):
+        assert sk.tip_scaled_of(foot).y > 20, f"{foot} should be below the pelvis"
+    # Feet should be roughly level with each other, or the pet stands lopsided.
+    assert abs(sk.tip_scaled_of("foot_l").y - sk.tip_scaled_of("foot_r").y) < 12
 
 
-def test_stand_offset_is_positive_and_reasonable():
-    sk = default_skeleton()
+@pytest.mark.parametrize("style", sorted(BODY_STYLES))
+def test_stand_offset_matches_leg_length(style):
+    sk = default_skeleton(style)
     offset = stand_offset_of(sk)
-    # Roughly thigh+shin+foot lengths (40+38+14) minus geometry, should be big.
-    assert 60 < offset < 130
+    legs = sk.bones["thigh_l"].length + sk.bones["shin_l"].length
+    # The pelvis-to-floor distance is essentially the leg chain, plus the ankle.
+    assert legs * 0.75 < offset < legs * 1.35
+
+
+def test_cute_style_has_a_bigger_head_than_human():
+    cute = default_skeleton("cute")
+    human = default_skeleton("human")
+
+    def heads_tall(sk):
+        return stand_offset_of(sk) / sk.bones["head"].length
+
+    # Chibi proportions mean fewer head-lengths of leg.
+    assert heads_tall(cute) < heads_tall(human)
 
 
 def test_blend_moves_toward_target():

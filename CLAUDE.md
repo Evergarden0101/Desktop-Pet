@@ -42,6 +42,7 @@ src/desktop_pet/
 ├── rig/
 │   ├── body_parts.py    BodyPart, the default humanoid BoneSpec rig
 │   ├── extractor.py     Cut a character image into parts (regions/auto/pose)
+│   ├── silhouette.py    Alpha-mask analysis: neck/shoulder/hip/leg landmarks
 │   ├── poses.py         PoseLibrary: procedural poses (walk, climb, creep, ...)
 │   ├── skeleton_utils.py  Derived measurements (foot-plant offset, span)
 │   └── loader.py        CharacterPack -> skeleton + extracted parts
@@ -91,6 +92,12 @@ overlay.refresh()         # repaint + rebuild the click-through mask
 4. **Angle convention** (see `rig/body_parts.py`): screen space, `0` = +X
    (right), `+pi/2` = down. `Bone.local_angle` is relative to the parent;
    `Skeleton.facing` (±1) mirrors the rig for direction of travel.
+
+4b. **Sprite axes.** An image part carries `pivot` (sits on the bone's near
+   joint) *and* `child_anchor` (its far end). The renderer maps pivot→bone base
+   and anchor→bone tip, which is what lets the **head** — whose joint is at the
+   chin while the art extends upward — render right way up. Never assume a
+   sprite runs top-to-bottom.
 
 5. **Landing is swept** (`behaviors/fall.py`): test the whole
    `[prev_feet, new_feet]` span so a fast fall can't tunnel through a ledge.

@@ -104,9 +104,22 @@ class PetApp:
             return self._loaded_cache[name]
         directory = resolve_character(name) or resolve_character("default")
         pack = CharacterPack.load(directory) if directory else CharacterPack("default", "")
-        loaded = load_character(pack)
+        loaded = load_character(pack, default_style=self.config.body_style)
         self._loaded_cache[name] = loaded
         return loaded
+
+    def set_body_style(self, style: str) -> None:
+        """Switch shape-drawn characters between cute and human proportions."""
+        self.config.body_style = style
+        self.config.save()
+        self._loaded_cache.clear()  # skeletons differ per style
+        count = len(self.pets)
+        self.pets.clear()
+        self.renderers.clear()
+        self.autonomy.clear()
+        for _ in range(count):
+            self.add_pet()
+        self._refresh_menus()
 
     def add_pet(self) -> Pet:
         loaded = self._load_character(self.character_name)
@@ -141,7 +154,13 @@ class PetApp:
                 for name, part in loaded.parts.items()
                 if part.image is not None
             }
-            renderer.set_part_pixmaps(pixmaps)
+            axes = {
+                name: ((part.pivot.x, part.pivot.y),
+                       (part.child_anchor.x, part.child_anchor.y))
+                for name, part in loaded.parts.items()
+                if part.image is not None
+            }
+            renderer.set_part_pixmaps(pixmaps, axes)
 
         self.pets.append(pet)
         self.renderers[pet_id] = renderer

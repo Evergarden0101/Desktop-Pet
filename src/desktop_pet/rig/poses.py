@@ -230,25 +230,32 @@ class PoseLibrary:
         )
 
     def wave(self, phase: float) -> Pose:
-        """Friendly wave with the right arm."""
-        wave = math.sin(phase * TAU * 2) * 0.4
+        """Friendly wave: upper arm out to the side, forearm up and swinging.
+
+        The arm is splayed outward rather than raised straight up so it clears
+        the head. That matters most for the "cute" rig, whose head is nearly as
+        long as the whole arm - a straight-up wave would disappear inside it.
+        """
+        swing = math.sin(phase * TAU * 2) * 0.35
         return self._pose(
             {
-                "upper_arm_r": -2.6,
-                "forearm_r": -0.6 + wave,
-                "head": 0.1,
+                "upper_arm_r": -1.45,          # out to the side, slightly raised
+                "forearm_r": -1.30 + swing,    # elbow bent, hand waving
+                "head": 0.12,                  # cheerful tilt
+                "upper_arm_l": 0.05,
             }
         )
 
     def cheer(self, phase: float) -> Pose:
-        """Both arms up, small hop feel."""
-        pump = math.sin(phase * TAU * 2) * 0.2
+        """Both arms up in a V, with a small pumping motion."""
+        pump = math.sin(phase * TAU * 2) * 0.18
         return self._pose(
             {
-                "upper_arm_l": -2.8 + pump,
-                "upper_arm_r": -2.8 - pump,
-                "forearm_l": -0.4,
-                "forearm_r": -0.4,
-                "head": -0.1,
+                # Splayed into a V so both arms stay outside the head.
+                "upper_arm_r": -2.15 - pump,
+                "upper_arm_l": 2.16 + pump,
+                "forearm_r": -0.15,
+                "forearm_l": -0.15,
+                "head": -0.08,
             }
         )

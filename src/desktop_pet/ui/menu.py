@@ -12,6 +12,7 @@ from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu
 
 from ..behaviors.autonomy import MODE_LABELS
+from ..rig.body_parts import BODY_STYLES
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..core.pet import Pet
@@ -71,6 +72,17 @@ def build_pet_menu(app: "PetApp", pet: Optional["Pet"] = None) -> QMenu:
     windows.setCheckable(True)
     windows.setChecked(app.config.interact_with_windows)
     windows.toggled.connect(app.toggle_window_interaction)
+
+    # --- Look ------------------------------------------------------------ #
+    style_menu = menu.addMenu("Look")
+    style_group = QActionGroup(style_menu)
+    style_group.setExclusive(True)
+    for style_name, style_def in BODY_STYLES.items():
+        act = style_menu.addAction(style_def["label"])
+        act.setCheckable(True)
+        act.setChecked(app.config.body_style == style_name)
+        style_group.addAction(act)
+        act.triggered.connect(_bind_style(app, style_name))
 
     # --- Size ------------------------------------------------------------ #
     size_menu = menu.addMenu("Size")
@@ -142,6 +154,13 @@ def _bind_scale(app, scale):
 def _bind_character(app, name):
     def handler(_checked=False):
         app.set_character(name)
+
+    return handler
+
+
+def _bind_style(app, style):
+    def handler(_checked=False):
+        app.set_body_style(style)
 
     return handler
 

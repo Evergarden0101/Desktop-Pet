@@ -26,11 +26,14 @@ class BodyPart:
     name: str
     image: object = None
     size: Tuple[int, int] = (0, 0)
-    # Pivot in normalized sprite coordinates (0..1). This point is placed on the
-    # bone's joint; the sprite is then rotated to the bone's world angle.
+    # Pivot in normalized sprite coordinates (0..1): the point placed on the
+    # bone's *near* joint.
     pivot: Vec2 = field(default_factory=lambda: Vec2(0.5, 0.1))
-    # Optional child anchor: where the *next* joint sits on this sprite, used to
-    # derive bone length automatically during extraction.
+    # Where the bone's *far* end lands on the sprite, also normalized. Together
+    # with ``pivot`` this defines the sprite's axis, so the renderer can map
+    # pivot -> bone base and anchor -> bone tip. That handles parts whose art
+    # runs "backwards" along the bone - most importantly the head, which grows
+    # upward from the neck joint.
     child_anchor: Vec2 = field(default_factory=lambda: Vec2(0.5, 0.9))
     source_rect: Optional[Tuple[int, int, int, int]] = None
 
@@ -107,9 +110,9 @@ DEFAULT_HUMANOID: List[BoneSpec] = [
     BoneSpec("forearm_l", "upper_arm_l", 28.0, 0.12, "forearm_l", z_order=3),
     BoneSpec("hand_l", "forearm_l", 10.0, 0.0, "hand_l", z_order=3),
 
-    BoneSpec("upper_arm_r", "torso", 32.0, 2.96, "upper_arm_r", z_order=8),
-    BoneSpec("forearm_r", "upper_arm_r", 28.0, 0.12, "forearm_r", z_order=9),
-    BoneSpec("hand_r", "forearm_r", 10.0, 0.0, "hand_r", z_order=9),
+    BoneSpec("upper_arm_r", "torso", 32.0, 2.96, "upper_arm_r", z_order=11),
+    BoneSpec("forearm_r", "upper_arm_r", 28.0, 0.12, "forearm_r", z_order=12),
+    BoneSpec("hand_r", "forearm_r", 10.0, 0.0, "hand_r", z_order=13),
 
     # Legs descend from the pelvis (hips tip), nearly vertical; feet point
     # forward. A small outward splay keeps them from overlapping exactly.
@@ -121,6 +124,78 @@ DEFAULT_HUMANOID: List[BoneSpec] = [
     BoneSpec("shin_r", "thigh_r", 40.0, 0.04, "shin_r", z_order=6),
     BoneSpec("foot_r", "shin_r", 13.0, -1.42, "foot_r", z_order=6),
 ]
+
+
+#
+# "Cute" (chibi) proportions: a big round head on a small body, ~3 heads tall.
+# This is the classic desktop-mascot look and reads much better at the small
+# sizes a desktop pet is actually drawn at, where a realistic 6-7 head figure
+# turns into a spindly stick.
+CUTE_HUMANOID: List[BoneSpec] = [
+    BoneSpec("hips", None, 4.0, -1.5708, "hips", z_order=5),
+    BoneSpec("torso", "hips", 34.0, 0.0, "torso", z_order=6),
+    BoneSpec("head", "torso", 42.0, 0.0, "head", z_order=10),
+
+    BoneSpec("upper_arm_l", "torso", 19.0, 3.34, "upper_arm_l", z_order=4),
+    BoneSpec("forearm_l", "upper_arm_l", 17.0, 0.16, "forearm_l", z_order=3),
+    BoneSpec("hand_l", "forearm_l", 8.0, 0.0, "hand_l", z_order=3),
+
+    BoneSpec("upper_arm_r", "torso", 19.0, 2.94, "upper_arm_r", z_order=11),
+    BoneSpec("forearm_r", "upper_arm_r", 17.0, 0.16, "forearm_r", z_order=12),
+    BoneSpec("hand_r", "forearm_r", 8.0, 0.0, "hand_r", z_order=13),
+
+    BoneSpec("thigh_l", "hips", 24.0, 3.22, "thigh_l", z_order=4),
+    BoneSpec("shin_l", "thigh_l", 22.0, 0.05, "shin_l", z_order=3),
+    BoneSpec("foot_l", "shin_l", 11.0, -1.45, "foot_l", z_order=3),
+
+    BoneSpec("thigh_r", "hips", 24.0, 3.06, "thigh_r", z_order=7),
+    BoneSpec("shin_r", "thigh_r", 22.0, 0.05, "shin_r", z_order=6),
+    BoneSpec("foot_r", "shin_r", 11.0, -1.45, "foot_r", z_order=6),
+]
+
+#: Selectable body styles. ``radii`` are capsule half-thicknesses in rig units
+#: and ``head_ratio``/``eye_scale`` tune the drawn head and face.
+BODY_STYLES = {
+    "cute": {
+        "label": "Cute (big head, chibi)",
+        "specs": CUTE_HUMANOID,
+        "radii": {
+            "torso": 15.0, "hips": 13.5,
+            "upper_arm_l": 6.0, "forearm_l": 5.4, "hand_l": 5.6,
+            "upper_arm_r": 6.0, "forearm_r": 5.4, "hand_r": 5.6,
+            "thigh_l": 8.0, "shin_l": 7.0, "foot_l": 6.2,
+            "thigh_r": 8.0, "shin_r": 7.0, "foot_r": 6.2,
+        },
+        "head_ratio": 0.56,
+        "eye_scale": 1.9,     # big sparkly eyes
+        "outline_width": 3.2,
+    },
+    "human": {
+        "label": "Human (realistic proportions)",
+        "specs": DEFAULT_HUMANOID,
+        "radii": {
+            "torso": 15.0, "hips": 13.0,
+            "upper_arm_l": 6.0, "forearm_l": 5.0, "hand_l": 5.5,
+            "upper_arm_r": 6.0, "forearm_r": 5.0, "hand_r": 5.5,
+            "thigh_l": 8.5, "shin_l": 6.5, "foot_l": 5.5,
+            "thigh_r": 8.5, "shin_r": 6.5, "foot_r": 5.5,
+        },
+        "head_ratio": 0.55,
+        "eye_scale": 1.0,
+        "outline_width": 3.0,
+    },
+}
+
+DEFAULT_STYLE = "cute"
+
+
+def style_config(style: Optional[str]) -> dict:
+    """Return the :data:`BODY_STYLES` entry for ``style`` (falling back safely)."""
+    return BODY_STYLES.get(style or DEFAULT_STYLE, BODY_STYLES[DEFAULT_STYLE])
+
+
+def humanoid_specs(style: Optional[str] = None) -> List[BoneSpec]:
+    return list(style_config(style)["specs"])
 
 
 def build_skeleton(specs: List[BoneSpec]) -> Skeleton:
@@ -142,8 +217,8 @@ def build_skeleton(specs: List[BoneSpec]) -> Skeleton:
     return Skeleton(bones)
 
 
-def default_skeleton() -> Skeleton:
-    return build_skeleton(DEFAULT_HUMANOID)
+def default_skeleton(style: Optional[str] = None) -> Skeleton:
+    return build_skeleton(humanoid_specs(style))
 
 
 def specs_from_json(data: List[dict]) -> List[BoneSpec]:

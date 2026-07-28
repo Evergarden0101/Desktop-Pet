@@ -37,10 +37,14 @@ animal, a blob — any PNG) and it gets cut into parts and animated automaticall
   climbs, sits, gets hungry or gets thrown (`你好呀~`, `爬上去看看!`, `nice day~`).
   Characters can ship their own phrases.
 - 🎨 **Bring any character — right in the app.** Open **Characters**, pick a
-  picture, and it's cut into body parts and registered for you. A built-in
+  picture, and it's cut into body parts and registered for you. The importer
+  *measures the drawing* — finding the neck, shoulders, hips and the gap between
+  the legs from the image itself — so cuts follow your art instead of fixed
+  proportions, and the rig keeps **your character's own build**. A built-in
   **character manager** lets you preview, switch, rename, duplicate and delete.
-  (CLI and hand-written packs still work.) No art? The built-in mascot is drawn
-  procedurally from shapes and works instantly.
+- 🧸 **Two looks.** **Cute** (big-headed chibi with sparkly eyes, the default)
+  or **Human** (realistic proportions) — switch from *Look* in the menu. No art
+  needed: the built-in mascot is drawn procedurally and works instantly.
 - 🛠️ **Highly customizable.** Size, opacity, frame rate, gravity, per-action
   speeds, which behaviours are allowed, autonomy pacing, number of pets, window
   interaction, follow-cursor, speech bubbles — all from a settings dialog or
@@ -101,6 +105,7 @@ Open **Settings** from the menu, or edit the JSON directly at
 | Setting | Meaning |
 | --- | --- |
 | `mode` | `free` (default), `mischief`, `calm` or `follow` |
+| `body_style` | `cute` (default) or `human` proportions for shape characters |
 | `scale`, `opacity`, `fps` | Size, transparency, smoothness |
 | `gravity_enabled` | Turn gravity/throwing on or off |
 | `walk/run/climb/creep_speed` | Per-action movement speeds |
@@ -133,8 +138,10 @@ python run.py run --character Hero
 
 Extraction strategies (`--method`):
 
-- `auto_humanoid` *(default)* — slices an upright, front-facing figure into
-  standard proportions. Zero extra dependencies.
+- `auto_humanoid` *(default)* — analyses the image's silhouette to locate the
+  neck, shoulders, hips and legs, then cuts along them. Adapts to chibi, tall or
+  arms-out artwork, and derives the character's bone proportions from the
+  drawing. Zero extra dependencies.
 - `regions` — you specify exact rectangles per part in `character.json`
   (pixel-perfect; best for hand-authored characters).
 - `pose` — uses **MediaPipe** pose landmarks if installed
