@@ -24,9 +24,10 @@ animal, a blob — any PNG) and it gets cut into parts and animated automaticall
   are driven by forward kinematics and **inverse kinematics** (so hands actually
   reach for and grip window edges while climbing).
 - 🧗 **Real window interaction.** The pet treats your open application windows
-  and the taskbar as a playground — it **stands and walks on title bars**,
-  **climbs window sides and screen edges**, **sits on ledges**, and **falls**
-  when you drag a window out from under it.
+  and the taskbar as a playground — it **walks into a window edge and climbs
+  it**, reaching up to grab ledges just overhead, **stands and walks on title
+  bars**, **perches on an edge with its legs dangling down over the window**,
+  and **falls** when you drag a window out from under it.
 - 🐛 **Lots of actions:** idle, walk, run, **creep/crawl**, **climb**, sit
   (legs dangling), sleep, wave, cheer, chase the cursor, and get dragged &
   thrown with real momentum.
@@ -40,8 +41,12 @@ animal, a blob — any PNG) and it gets cut into parts and animated automaticall
   picture, and it's cut into body parts and registered for you. The importer
   *measures the drawing* — finding the neck, shoulders, hips and the gap between
   the legs from the image itself — so cuts follow your art instead of fixed
-  proportions, and the rig keeps **your character's own build**. A built-in
-  **character manager** lets you preview, switch, rename, duplicate and delete.
+  proportions, and the rig keeps **your character's own build**. It copes with
+  photographs too: long hair, folded arms and thigh-cropped shots. A picture
+  with no usable legs (a head-and-shoulders crop) becomes a **cutout** pet that
+  still looks exactly like the source instead of being mangled into limbs that
+  aren't there. A built-in **character manager** lets you preview, switch,
+  rename, duplicate and delete.
 - 🧸 **Two looks.** **Cute** (big-headed chibi with sparkly eyes, the default)
   or **Human** (realistic proportions) — switch from *Look* in the menu. No art
   needed: the built-in mascot is drawn procedurally and works instantly.

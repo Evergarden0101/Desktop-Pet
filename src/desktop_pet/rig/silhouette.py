@@ -52,6 +52,28 @@ class RowInfo:
         return (self.left + self.right) / 2.0
 
 
+#: Anatomical proportions of a standing human, measured in head-heights from
+#: the crown (a "head" here includes hair, which is what a photo shows).
+#: Used to sanity-check measured landmarks and to fill in ones the picture
+#: doesn't show - a photo cropped at the thigh still has a believable hip.
+HEADS_TO_SHOULDER = 1.10
+HEADS_TO_HIP = 3.10
+HEADS_TO_CROTCH = 3.90
+HEADS_TO_KNEE = 5.60
+HEADS_TO_FOOT = 7.40
+
+#: A leg region smaller than this fraction of the figure means the picture is
+#: cropped above the legs (a bust or waist-up shot) and cannot be rigged as a
+#: walking figure.
+MIN_LEG_FRACTION = 0.16
+
+#: Plausible range for head height as a fraction of the whole figure, used to
+#: sanity-check the shoulder measurement. A real standing human sits near 0.13;
+#: stylised art goes higher. Outside this band the picture isn't a full figure.
+MIN_HEAD_FRACTION = 0.07
+MAX_HEAD_FRACTION = 0.34
+
+
 @dataclass
 class Silhouette:
     """Landmarks describing where the parts of a figure are."""
@@ -74,6 +96,13 @@ class Silhouette:
     arm_bounds: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
     #: Whether analysis found a believable humanoid; False -> caller falls back.
     confident: bool = True
+    #: How the picture can be rigged:
+    #:   "figure" - head, body and legs are all present: full articulated rig
+    #:   "cutout" - no usable legs (bust/waist-up crop, or an abstract shape):
+    #:              rig as head + body so the pet still looks like the picture
+    layout: str = "figure"
+    #: True when the legs were split by measurement rather than assumed.
+    legs_detected: bool = False
 
     def row_at(self, y: int) -> Optional[RowInfo]:
         index = y - self.box[1]
@@ -175,43 +204,58 @@ def _smooth(values: Sequence[float], window: int) -> List[float]:
 
 
 # ---------------------------------------------------------------- landmarks
-def _find_neck(widths: Sequence[float], height: int) -> Optional[int]:
-    """Row index of the narrowest point in the upper part of the figure.
+def _find_shoulder(widths: Sequence[float], height: int) -> Optional[int]:
+    """Row index of the shoulder line: where the figure widens fastest.
 
-    A humanoid's head is wide, the neck below it is narrow, and the shoulders
-    below that are wide again - so the neck is a clear local minimum in the
-    first third of the body.
+    Looking for a *narrow neck* (a local minimum in width) works on clip-art
+    but fails on photographs, because hair falls past the jaw and fills the
+    neck in - the profile just grows steadily from crown to shoulders with no
+    pinch anywhere. What survives both cases is the **shoulder step**: going
+    down the body, width jumps sharply where the shoulders start, and that
+    jump is the largest positive gradient in the upper half.
     """
-    lo = int(height * 0.08)
-    hi = int(height * 0.42)
-    if hi - lo < 3:
+    lo = max(2, int(height * 0.04))
+    hi = int(height * 0.50)
+    if hi - lo < 4:
         return None
-    window = widths[lo:hi]
-    best = min(range(len(window)), key=lambda i: window[i])
-    neck = lo + best
 
-    # Require the neck to actually pinch: narrower than the head above it and
-    # than the shoulders below, otherwise this isn't a head-on-neck shape.
-    head_width = max(widths[: max(1, neck)] or [0])
-    below = widths[neck : min(len(widths), neck + int(height * 0.2))]
-    shoulder_width = max(below) if below else 0
-    if head_width <= 0 or shoulder_width <= 0:
+    # Compare each row against one a short distance above, so the measurement
+    # spans the shoulder slope rather than pixel noise.
+    span = max(2, height // 40)
+    best_row = None
+    best_gain = 0.0
+    for i in range(lo, hi):
+        above = widths[max(0, i - span)]
+        gain = widths[i] - above
+        if gain > best_gain:
+            best_gain = gain
+            best_row = i
+
+    if best_row is None:
         return None
-    if widths[neck] > head_width * 0.92 or widths[neck] > shoulder_width * 0.92:
+    # The step must be a real widening, not a gentle taper.
+    max_width = max(widths) if widths else 0.0
+    if max_width <= 0 or best_gain < max_width * 0.06:
         return None
-    return neck
+    return best_row
 
 
 def _find_crotch(rows: Sequence[RowInfo], height: int) -> Optional[int]:
-    """Highest row (as an index) where the figure splits into two legs."""
-    start = int(height * 0.45)
+    """Highest row (as an index) where the figure splits into exactly two legs.
+
+    *Exactly* two matters. A figure with its arms held clear of the body also
+    has separated runs across the torso - arm, torso, arm - and accepting "two
+    or more" made that read as the crotch, putting it up around the ribs. Two
+    runs and no more is the leg signature.
+    """
+    start = int(height * 0.40)
     for index in range(start, len(rows)):
-        row = rows[index]
-        if len(row.runs) >= 2:
-            # Confirm the split persists rather than being a one-row artifact.
-            lookahead = rows[index : min(len(rows), index + max(3, height // 40))]
-            if sum(1 for r in lookahead if len(r.runs) >= 2) >= len(lookahead) * 0.6:
-                return index
+        if len(rows[index].runs) != 2:
+            continue
+        # Confirm the split persists rather than being a one-row artifact.
+        lookahead = rows[index : min(len(rows), index + max(3, height // 40))]
+        if sum(1 for r in lookahead if len(r.runs) == 2) >= len(lookahead) * 0.6:
+            return index
     return None
 
 
@@ -234,7 +278,15 @@ def _find_arm_bands(
 
 
 def analyze(image) -> Silhouette:
-    """Measure ``image`` and locate the figure's landmarks."""
+    """Measure ``image`` and locate the figure's landmarks.
+
+    The strategy is *measure first, then fall back on anatomy*: the shoulder
+    line and the gap between the legs are read straight off the alpha mask,
+    and anything the picture doesn't show (a crotch hidden by a baggy coat, a
+    hip below the crop) is filled in from human proportions anchored to the
+    measured head height. That keeps clean artwork pixel-accurate while still
+    producing a believable rig from an ordinary photo.
+    """
     mask, width, _height, box = _binary_mask(image)
     x0, y0, x1, y1 = box
     rows = _scan_rows(mask, width, box)
@@ -242,45 +294,76 @@ def analyze(image) -> Silhouette:
 
     widths = _smooth([float(r.width) for r in rows], max(3, body_height // 50))
 
-    def to_y(index: Optional[int], fallback: float) -> int:
-        if index is None:
-            return int(y0 + fallback * body_height)
-        return y0 + index
+    # ---- head height, from the shoulder step -----------------------------
+    shoulder_index = _find_shoulder(widths, body_height)
+    measured_shoulder = shoulder_index is not None
+    if shoulder_index is None:
+        shoulder_index = int(body_height * 0.20)
 
-    neck_index = _find_neck(widths, body_height)
+    head_h = max(4.0, float(shoulder_index) / HEADS_TO_SHOULDER)
+    # A head much bigger than a quarter of the picture means we are looking at
+    # a bust/waist-up crop, not a full figure: proportions below the shoulders
+    # can no longer be trusted, but the head measurement itself still is.
+    head_fraction = head_h / body_height
+
+    # ---- crotch: measured split, or anatomy ------------------------------
     crotch_index = _find_crotch(rows, body_height)
+    predicted_crotch = HEADS_TO_CROTCH * head_h
+    legs_detected = False
+    if crotch_index is not None:
+        # Trust a measured split only when it lands somewhere a crotch could
+        # plausibly be; wide hips and long coats produce spurious early splits.
+        if 0.35 * body_height <= crotch_index <= 0.78 * body_height:
+            legs_detected = True
+        else:
+            crotch_index = None
+    if crotch_index is None:
+        crotch_index = int(min(predicted_crotch, body_height * 0.62))
 
-    confident = neck_index is not None
+    # ---- can this be rigged as a walking figure? -------------------------
+    leg_fraction = (body_height - crotch_index) / body_height
+    layout = "figure"
+    if not legs_detected:
+        # Nothing below the torso actually parted into two legs, so judge the
+        # shape by its head. A human head is between about a tenth and a
+        # quarter of standing height; well outside that range means this isn't
+        # a full figure. Too *large* is a bust or waist-up crop; too *small*
+        # means the shoulder step was really just the curve of a blob, and
+        # there is no head-on-body structure at all.
+        # (A chibi has a huge head *and* real legs - hence testing the measured
+        # split first, so it is never demoted here.)
+        if (
+            leg_fraction < MIN_LEG_FRACTION
+            or not (MIN_HEAD_FRACTION <= head_fraction <= MAX_HEAD_FRACTION)
+        ):
+            # Rig as a cutout (head + body) rather than inventing limbs that
+            # aren't in the picture.
+            layout = "cutout"
 
-    neck_y = to_y(neck_index, 0.22)
-    crotch_y = to_y(crotch_index, 0.55)
-    # Shoulders sit just below the neck, where the body reaches full width.
-    shoulder_index = (neck_index if neck_index is not None else int(body_height * 0.22))
-    shoulder_scan_end = min(body_height, shoulder_index + max(2, body_height // 12))
-    widest = shoulder_index
-    for i in range(shoulder_index, shoulder_scan_end):
-        if widths[i] > widths[widest]:
-            widest = i
-    shoulder_y = y0 + widest
+    shoulder_y = y0 + shoulder_index
+    neck_y = y0 + max(0, int(shoulder_index - head_h * 0.10))
 
-    crotch_index_eff = crotch_index if crotch_index is not None else int(body_height * 0.55)
-    torso_span = max(1, crotch_index_eff - widest)
-    waist_y = y0 + widest + int(torso_span * 0.62)
-    hip_y = y0 + widest + int(torso_span * 0.88)
+    torso_span = max(1, crotch_index - shoulder_index)
+    waist_y = y0 + shoulder_index + int(torso_span * 0.62)
+    hip_y = y0 + shoulder_index + int(torso_span * 0.86)
+    crotch_y = y0 + crotch_index
 
-    # Feet: the bottom slice of the legs.
-    foot_top = y1 - max(2, int(body_height * 0.07))
+    # ---- feet -------------------------------------------------------------
+    predicted_foot_top = y0 + HEADS_TO_KNEE * head_h + (HEADS_TO_FOOT - HEADS_TO_KNEE) * head_h * 0.72
+    if legs_detected and predicted_foot_top < y1 - 4:
+        foot_top = int(predicted_foot_top)
+    else:
+        foot_top = y1 - max(2, int((y1 - crotch_y) * 0.14))
+    foot_top = int(min(max(foot_top, crotch_y + 4), y1 - 2))
 
-    # Where the legs divide: the gap between the two runs just under the crotch.
-    leg_split_x = (x0 + x1) / 2.0
-    probe = min(len(rows) - 1, crotch_index_eff + max(1, body_height // 40))
-    if 0 <= probe < len(rows) and len(rows[probe].runs) >= 2:
-        first, second = rows[probe].runs[0], rows[probe].runs[-1]
-        leg_split_x = (first[1] + second[0]) / 2.0
-    elif rows:
-        leg_split_x = rows[min(probe, len(rows) - 1)].center
+    # ---- where the legs divide -------------------------------------------
+    leg_split_x = _leg_split(rows, crotch_index, body_height, x0, x1)
 
-    arm_bounds = _find_arm_bands(rows, widest, min(len(rows), crotch_index_eff))
+    arm_bounds = _find_arm_bands(rows, shoulder_index, min(len(rows), crotch_index))
+
+    # "Confident" now means we located a real shoulder line - the one landmark
+    # everything else is anchored to. A cutout layout is still a usable result.
+    confident = measured_shoulder
 
     return Silhouette(
         box=(x0, y0, x1, y1),
@@ -297,4 +380,31 @@ def analyze(image) -> Silhouette:
         arms_detached=arm_bounds is not None,
         arm_bounds=arm_bounds,
         confident=confident,
+        layout=layout,
+        legs_detected=legs_detected,
     )
+
+
+def _leg_split(rows, crotch_index: int, body_height: int, x0: int, x1: int) -> float:
+    """Column where the two legs part.
+
+    Uses the gap between the outer runs just below the crotch when the legs are
+    actually separate. Baggy trousers merge into one run, so as a fallback the
+    leg region is halved down its own centre line - visually convincing even
+    though the split is invented.
+    """
+    probe = min(len(rows) - 1, crotch_index + max(1, body_height // 40))
+    if 0 <= probe < len(rows):
+        runs = rows[probe].runs
+        if len(runs) >= 2:
+            return (runs[0][1] + runs[-1][0]) / 2.0
+
+    # Centre of the leg region, averaged over a few rows for stability.
+    centres = [
+        r.center
+        for r in rows[crotch_index:]
+        if r.count > 0
+    ]
+    if centres:
+        return sum(centres) / len(centres)
+    return (x0 + x1) / 2.0

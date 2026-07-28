@@ -15,6 +15,7 @@ from typing import Optional
 from ..core.environment import Wall
 from ..core.geometry import Vec2
 from .base import Behavior
+from .locomotion import REACH_UP_BODIES
 
 
 class ClimbBehavior(Behavior):
@@ -38,7 +39,13 @@ class ClimbBehavior(Behavior):
         # side and a screen edge mid-climb.
         self._wall_id = self._identity(target) if target else None
         self._stuck = 0.0
+        # Which side of the wall the pet climbs on is decided by where it
+        # actually is, not by ``Wall.facing``: it meets a screen edge from the
+        # inside but an application window's edge from the outside, and both
+        # must work.
+        self._side = 0
         if target is not None:
+            self._side = 1 if pet.body.position.x >= target.x else -1
             self._attach(target)
 
     @staticmethod
@@ -47,10 +54,13 @@ class ClimbBehavior(Behavior):
 
     def _attach(self, wall: Wall) -> None:
         pet = self.pet
+        side = self._side or (1 if pet.body.position.x >= wall.x else -1)
+        # Overlap the edge slightly so the pet reads as gripping it rather
+        # than floating alongside.
         pet.body.position = Vec2(
-            wall.x + wall.facing * pet.half_width(), pet.body.position.y
+            wall.x + side * pet.half_width() * 0.55, pet.body.position.y
         )
-        pet.facing = -wall.facing  # face the wall
+        pet.facing = -side  # face the wall it is holding on to
 
     def _current_wall(self) -> Optional[Wall]:
         """Re-resolve the wall being climbed (walls are rebuilt every frame).
@@ -60,13 +70,17 @@ class ClimbBehavior(Behavior):
         teleporting it across the desktop.
         """
         pet = self.pet
+        # The pet may start below a floating window's edge and climb up into
+        # it, so tolerate being under the wall's span by one body height - the
+        # same reach ``wall_blocking`` used to decide the climb was possible.
+        margin = self.grab_radius + pet.body_height() * REACH_UP_BODIES
         if self._wall_id is not None:
             for wall in self.env.walls:
                 if self._identity(wall) != self._wall_id:
                     continue
                 if abs(wall.x - pet.body.position.x) > self.grab_radius * 2:
                     continue
-                if not wall.contains_y(pet.body.position.y, self.grab_radius):
+                if not wall.contains_y(pet.body.position.y, margin):
                     continue
                 return wall
         # Lost it (window closed/moved): fall back to whatever is in reach.
@@ -121,9 +135,13 @@ class ClimbBehavior(Behavior):
         return None
 
     def _top_surface(self, wall: Wall):
+        # Allow a margin of the pet's own width: while climbing it hugs the
+        # edge and can sit just outside the window's span, but it should still
+        # be able to pull itself up onto the ledge (set_feet_on clamps it on).
+        margin = self.pet.half_width() + 10.0
         for surface in self.env.surfaces:
             if abs(surface.y - wall.top) <= 6 and surface.contains_x(
-                self.pet.body.position.x, margin=6
+                self.pet.body.position.x, margin=margin
             ):
                 return surface
         return None

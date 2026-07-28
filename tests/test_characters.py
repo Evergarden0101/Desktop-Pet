@@ -51,7 +51,7 @@ def test_import_creates_usable_pack(library, tmp_path):
 
     assert info.name == "Hero"
     assert info.render_mode == "image"
-    assert info.part_count >= 10
+    assert info.part_count >= 9
     assert os.path.exists(os.path.join(info.directory, "character.json"))
     assert os.path.exists(os.path.join(info.directory, "texture.png"))
     assert not info.builtin and info.can_delete

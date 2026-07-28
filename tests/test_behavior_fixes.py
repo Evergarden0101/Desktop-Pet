@@ -264,3 +264,118 @@ def test_default_mode_is_free_and_does_its_own_thing():
         pet.update(1 / 60)
         seen.add(pet.state.current_name)
     assert len(seen) >= 3, f"free mode should vary its activity, saw {seen}"
+
+
+# ------------------------------------------------- climbing app windows
+def _window_rect(backend, *args):
+    return backend.windows[0].rect.__class__(*args)
+
+
+def test_walking_climbs_a_window_left_edge():
+    """Approaching a window head-on must trigger a climb.
+
+    Regression: ``wall_blocking`` filtered on ``Wall.facing``, which matched
+    only screen edges. A window's *left* edge faces the opposite way from the
+    screen's right edge, so walking into a window never started a climb.
+    """
+    pet, backend = make_pet(autonomy_enabled=False, climb_chance=1.0)
+    floor = pet.env.world_floor()
+    backend.windows = backend.windows[:1]
+    backend.windows[0].rect = _window_rect(backend, 900, 300, 500, floor - 300)
+    pet.body.position = Vec2(700, floor - pet.stand_offset)
+    pet.set_environment(Environment(backend.snapshot(), True))
+    pet.state.change("walk", target_x=1850, duration=60)
+
+    climbed = False
+    for _ in range(60 * 12):
+        pet.set_environment(Environment(backend.snapshot(), True))
+        pet.update(1 / 60)
+        if pet.state.current_name == "climb":
+            climbed = True
+    assert climbed, "pet walked into a window edge without climbing it"
+    assert pet.position.y < floor - pet.stand_offset, "made no upward progress"
+
+
+def test_climbing_works_from_either_side_of_a_wall():
+    """Screen edges are met from the inside, window edges from the outside."""
+    for start_x, expect_side in ((700, "left-of-window"), (1600, "right-of-window")):
+        pet, backend = make_pet(autonomy_enabled=False, climb_chance=1.0)
+        floor = pet.env.world_floor()
+        backend.windows = backend.windows[:1]
+        backend.windows[0].rect = _window_rect(backend, 900, 300, 500, floor - 300)
+        pet.body.position = Vec2(start_x, floor - pet.stand_offset)
+        pet.set_environment(Environment(backend.snapshot(), True))
+        target = 1850 if start_x < 900 else 60
+        pet.state.change("walk", target_x=target, duration=60)
+        top = pet.position.y
+        for _ in range(60 * 12):
+            pet.set_environment(Environment(backend.snapshot(), True))
+            pet.update(1 / 60)
+            top = min(top, pet.position.y)
+        assert top < floor - pet.stand_offset - 40, f"no climb from {expect_side}"
+
+
+def test_window_far_overhead_is_walked_under_not_climbed():
+    pet, backend = make_pet(autonomy_enabled=False, climb_chance=1.0)
+    floor = pet.env.world_floor()
+    backend.windows = backend.windows[:1]
+    backend.windows[0].rect = _window_rect(backend, 900, 60, 500, 200)  # way up
+    pet.body.position = Vec2(700, floor - pet.stand_offset)
+    pet.set_environment(Environment(backend.snapshot(), True))
+    pet.state.change("walk", target_x=1850, duration=60)
+    for _ in range(60 * 8):
+        pet.set_environment(Environment(backend.snapshot(), True))
+        pet.update(1 / 60)
+        assert pet.state.current_name != "climb", "climbed an unreachable window"
+
+
+# ------------------------------------------------- sitting on a ledge
+def test_sitting_on_a_window_hangs_the_legs_into_it():
+    """Perched on a title bar, the legs must extend below the edge."""
+    pet, backend = make_pet(autonomy_enabled=False, scale=1.5)
+    pet.rescale(1.5)
+    top = backend.windows[0].rect.top
+    pet.body.position = Vec2(500, top - pet.stand_offset)
+    pet.set_environment(Environment(backend.snapshot(), True))
+    pet.state.change("idle")
+    step(pet, backend, 0.3)
+    pet.state.change("sit", duration=30)
+    step(pet, backend, 2.0)
+
+    assert pet.state.current_name == "sit", "the pet fell instead of sitting"
+    assert pet.state.current.on_ledge
+    lowest = pet.body_rect(pad=0).bottom
+    assert lowest > top + 10, "legs do not hang over the edge"
+    # The pelvis rests on the edge rather than floating above it.
+    assert abs(pet.position.y - top) < pet.stand_offset * 0.3
+
+
+def test_sitting_on_the_floor_keeps_feet_planted():
+    pet, backend = make_pet(autonomy_enabled=False)
+    floor = pet.env.world_floor()
+    pet.body.position = Vec2(150, floor - pet.stand_offset)
+    pet.set_environment(Environment(backend.snapshot(), True))
+    pet.state.change("idle")
+    step(pet, backend, 0.3)
+    pet.state.change("sit", duration=30)
+    step(pet, backend, 2.0)
+
+    assert pet.state.current_name == "sit"
+    assert not pet.state.current.on_ledge
+    # Nothing should poke through the floor.
+    assert pet.body_rect(pad=0).bottom <= floor + 2
+
+
+def test_calm_mode_does_not_climb_walls_it_walks_into():
+    """Mode weights must govern bumped-into climbs, not just spontaneous ones."""
+    pet, backend = make_pet(autonomy_enabled=False, mode="calm", climb_chance=1.0)
+    floor = pet.env.world_floor()
+    backend.windows = backend.windows[:1]
+    backend.windows[0].rect = _window_rect(backend, 900, 300, 500, floor - 300)
+    pet.body.position = Vec2(700, floor - pet.stand_offset)
+    pet.set_environment(Environment(backend.snapshot(), True))
+    pet.state.change("walk", target_x=1850, duration=60)
+    for _ in range(60 * 8):
+        pet.set_environment(Environment(backend.snapshot(), True))
+        pet.update(1 / 60)
+        assert pet.state.current_name != "climb"

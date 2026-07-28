@@ -15,7 +15,7 @@ from typing import Dict, List, Optional
 from ..config import AppConfig
 from ..rig.body_parts import BodyPart, default_skeleton
 from ..rig.poses import PoseLibrary
-from ..rig.skeleton_utils import stand_offset_of
+from ..rig.skeleton_utils import rise_of, stand_offset_of
 from .environment import Environment, Surface
 from .events import EventBus
 from .geometry import Vec2, clamp
@@ -95,6 +95,9 @@ class Pet:
         # Vertical distance from the skeleton root to the feet in the rest pose;
         # used to plant the pet on surfaces.
         self.stand_offset = stand_offset_of(self.skeleton) * config.scale
+        # How far the rig reaches *above* the root. A legless "cutout" rig has
+        # no stand offset at all, so this is what makes it a real-sized pet.
+        self.rise_offset = rise_of(self.skeleton) * config.scale
         # How far above the current support surface the root should sit. Most
         # behaviours use ``stand_offset``; sit/creep/sleep shrink it.
         self.ground_offset = self.stand_offset
@@ -141,8 +144,16 @@ class Pet:
     def half_height(self) -> float:
         return self.stand_offset
 
+    def body_height(self) -> float:
+        """Full height of the rig, above and below the root.
+
+        Use this - not ``stand_offset`` - whenever the question is "how tall is
+        this pet?", so legless rigs aren't treated as zero-height.
+        """
+        return max(self.stand_offset + self.rise_offset, 1.0)
+
     def half_width(self) -> float:
-        return 0.28 * self.stand_offset
+        return max(0.28 * self.stand_offset, 0.16 * self.body_height(), 4.0)
 
     def body_rect(self, pad: float = 18.0):
         """Axis-aligned bounds around the rig itself (virtual coords).
@@ -238,6 +249,7 @@ class Pet:
         self.config.scale = scale
         self.skeleton.scale = scale
         self.stand_offset = stand_offset_of(self.skeleton) * scale
+        self.rise_offset = rise_of(self.skeleton) * scale
         # Preserve a crouched/sitting/lying posture across the resize.
         self.ground_offset = self.stand_offset * ratio if lying else self.stand_offset
 

@@ -99,9 +99,10 @@ def test_climb_reaches_window_top():
     pet.body.position = Vec2(305, 600)
     pet.state.change("climb", direction=-1)
     step(pet, backend, 8.0)
-    # It should have mounted the top (idle on the window) or still be climbing up.
+    # It should have mounted the top or still be climbing up. On reaching the
+    # top it may settle down and sit on the ledge it just conquered.
     assert pet.body.position.y < 600  # made upward progress
-    assert pet.state.current_name in ("idle", "climb", "fall")
+    assert pet.state.current_name in ("idle", "climb", "fall", "sit")
 
 
 def test_autonomy_changes_behaviors_over_time():

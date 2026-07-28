@@ -95,9 +95,11 @@ overlay.refresh()         # repaint + rebuild the click-through mask
 
 4b. **Sprite axes.** An image part carries `pivot` (sits on the bone's near
    joint) *and* `child_anchor` (its far end). The renderer maps pivot→bone base
-   and anchor→bone tip, which is what lets the **head** — whose joint is at the
-   chin while the art extends upward — render right way up. Never assume a
-   sprite runs top-to-bottom.
+   and anchor→bone tip. `head`, `torso` and `hips` hang off bones that point
+   *up*, so their sprites run bottom-to-top; limbs run top-to-bottom. Get this
+   wrong and the pivot collapses onto the anchor — the measured axis becomes a
+   few pixels and the part is scaled up enormously. `rig/extractor.py::
+   _PART_AXES` is the single source of truth; a test asserts no axis degenerates.
 
 5. **Landing is swept** (`behaviors/fall.py`): test the whole
    `[prev_feet, new_feet]` span so a fast fall can't tunnel through a ledge.
@@ -117,7 +119,20 @@ overlay.refresh()         # repaint + rebuild the click-through mask
    `body_rect()`/`contains_point` instead, so the bubble never becomes a
    grab handle. Add new decorations to `bounding_rect` or they won't show.
 
-8. **Resizing anchors the feet.** `Pet.rescale` recomputes `stand_offset` and
+8. **Climbing must not filter on `Wall.facing`.** `facing` records which side
+   of a wall is climbable, and the pet meets screen edges from the *inside*
+   but application-window edges from the *outside*. Filtering on it silently
+   restricts climbing to screen edges. Which side to attach is decided from
+   the pet's own position (`ClimbBehavior._side`). Reach is judged against
+   `Pet.body_height()`, not `stand_offset` — legless "cutout" rigs have a
+   stand offset of zero.
+
+9. **Changing `ground_offset` requires re-planting.** It defines where the
+   pet's footing is measured from, so a behaviour that changes it (sit, creep,
+   sleep) must call `set_feet_on` in the same breath, or the body is left
+   hovering, `stick_to_support` finds nothing and the pet falls instead.
+
+10. **Resizing anchors the feet.** `Pet.rescale` recomputes `stand_offset` and
    then moves the root so `feet_y()` is unchanged (preserving any crouch ratio).
    Scaling without this pushes the feet *through* the floor — a large pet ends
    up below the screen.

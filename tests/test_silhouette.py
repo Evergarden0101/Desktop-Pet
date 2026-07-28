@@ -20,8 +20,8 @@ def tall_figure(W=240, H=560):
     d.rectangle([cx - 12, 88, cx + 12, 108], fill=(255, 217, 160, 255))    # neck
     d.rounded_rectangle([cx - 52, 105, cx + 52, 260], 16, fill=(79, 140, 255, 255))
     d.rounded_rectangle([cx - 46, 255, cx + 46, 310], 12, fill=(47, 53, 80, 255))
-    d.rounded_rectangle([cx - 76, 115, cx - 50, 265], 12, fill=(255, 217, 160, 255))
-    d.rounded_rectangle([cx + 50, 115, cx + 76, 265], 12, fill=(255, 217, 160, 255))
+    d.rounded_rectangle([cx - 78, 115, cx - 40, 265], 12, fill=(255, 217, 160, 255))
+    d.rounded_rectangle([cx + 40, 115, cx + 78, 265], 12, fill=(255, 217, 160, 255))
     d.rounded_rectangle([cx - 42, 305, cx - 8, 505], 12, fill=(47, 53, 80, 255))
     d.rounded_rectangle([cx + 8, 305, cx + 42, 505], 12, fill=(47, 53, 80, 255))
     d.rounded_rectangle([cx - 48, 500, cx - 4, 540], 8, fill=(31, 34, 51, 255))
@@ -90,6 +90,18 @@ def test_detects_detached_arms():
     assert not silhouette.analyze(tall_figure()).arms_detached
 
 
+def test_arms_only_extracted_when_separable():
+    """Arms resting on the body stay in the torso instead of becoming blobs."""
+    detached = extractor.extract_auto_humanoid(arms_out_figure())
+    assert "upper_arm_l" in detached.parts
+    assert any(b["name"] == "upper_arm_l" for b in detached.skeleton)
+
+    against = extractor.extract_auto_humanoid(tall_figure())
+    assert "upper_arm_l" not in against.parts
+    assert not any(b["name"] == "upper_arm_l" for b in against.skeleton)
+    assert "torso" in against.parts
+
+
 def test_landmarks_are_ordered_top_to_bottom():
     for figure in (tall_figure(), chibi_figure(), arms_out_figure()):
         s = silhouette.analyze(figure)
@@ -98,15 +110,16 @@ def test_landmarks_are_ordered_top_to_bottom():
         assert s.crotch_y <= s.foot_top <= s.bottom
 
 
-def test_blob_is_not_confident_and_falls_back():
-    """A featureless shape has no neck; extraction must still return parts."""
+def test_blob_becomes_a_cutout():
+    """A ball has no legs to rig, so keep it whole rather than inventing limbs."""
     img = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
     ImageDraw.Draw(img).ellipse([20, 20, 180, 180], fill=(200, 120, 255, 255))
     shape = silhouette.analyze(img)
-    assert not shape.confident
+    assert shape.layout == "cutout"
 
     result = extractor.extract_auto_humanoid(img)
-    assert set(STANDARD_PARTS).issubset(result.parts.keys())
+    assert "torso" in result.parts and "head" in result.parts
+    assert result.layout == "cutout"
 
 
 # ---------------------------------------------------------------- extraction
@@ -116,7 +129,11 @@ def test_blob_is_not_confident_and_falls_back():
 def test_extraction_produces_sane_boxes(factory):
     img = factory()
     result = extractor.extract_auto_humanoid(img)
-    assert set(STANDARD_PARTS).issubset(result.parts.keys())
+    # Body and legs are always cut; arms only when they are separable from the
+    # torso (otherwise they stay part of the torso sprite by design).
+    core = {"head", "torso", "hips", "thigh_l", "shin_l", "foot_l",
+            "thigh_r", "shin_r", "foot_r"}
+    assert core.issubset(result.parts.keys())
 
     x0, y0, x1, y1 = result.content_box
     for name, part in result.parts.items():
@@ -159,14 +176,29 @@ def test_legs_split_into_left_and_right():
 
 
 # --------------------------------------------------------------- sprite axes
-def test_head_axis_runs_upward_from_the_chin():
-    """The head's joint is at its chin and the skull extends the other way."""
-    pivot, anchor = extractor.part_axis("head")
-    assert pivot[1] > anchor[1], "head sprite must run bottom-to-top"
-    # Everything else runs downward from its proximal joint.
-    for part in ("torso", "thigh_l", "forearm_r"):
-        p, a = extractor.part_axis(part)
-        assert p[1] < a[1], f"{part} sprite should run top-to-bottom"
+def test_sprite_axes_follow_their_bone_direction():
+    """Up-the-body parts run bottom-to-top; limbs run top-to-bottom.
+
+    ``head``, ``torso`` and ``hips`` all hang off bones that point upward, so
+    their joint is at the sprite's lower edge. Getting this wrong collapses the
+    pivot onto the anchor and the part is scaled by a huge factor.
+    """
+    for part in ("head", "torso", "hips"):
+        pivot, anchor = extractor.part_axis(part)
+        assert pivot[1] > anchor[1], f"{part} sprite must run bottom-to-top"
+        assert abs(pivot[1] - anchor[1]) > 0.5, f"{part} axis is degenerate"
+    for part in ("thigh_l", "forearm_r", "shin_r"):
+        pivot, anchor = extractor.part_axis(part)
+        assert pivot[1] < anchor[1], f"{part} sprite should run top-to-bottom"
+        assert abs(pivot[1] - anchor[1]) > 0.5, f"{part} axis is degenerate"
+
+
+def test_extracted_axes_span_the_sprite():
+    """Every part's measured axis must be a real length, not a few pixels."""
+    result = extractor.extract_auto_humanoid(tall_figure())
+    for name, part in result.parts.items():
+        span = abs(part.child_anchor.y - part.pivot.y) * part.size[1]
+        assert span > part.size[1] * 0.4, f"{name} axis collapsed ({span:.1f}px)"
 
 
 def test_extracted_parts_carry_their_axes():
@@ -207,7 +239,7 @@ def test_derived_skeleton_matches_the_artwork():
 def test_derived_skeleton_is_complete_and_positive():
     bones = extractor.extract_auto_humanoid(tall_figure()).skeleton
     names = {b["name"] for b in bones}
-    assert set(STANDARD_PARTS).issubset(names)
+    assert extractor.CORE_PARTS.issubset(names)
     for bone in bones:
         assert bone["length"] > 0, bone["name"]
         assert "rest_angle" in bone and "parent" in bone

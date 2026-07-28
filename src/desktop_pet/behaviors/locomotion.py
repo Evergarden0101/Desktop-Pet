@@ -16,6 +16,12 @@ from ..core.geometry import Vec2
 from .base import Behavior
 
 
+#: How far above its own head (in body heights) the pet can grab a ledge.
+#: Shared with ClimbBehavior so "can I reach it?" and "am I still on it?"
+#: agree - otherwise the pet grabs a window it immediately falls off.
+REACH_UP_BODIES = 1.0
+
+
 class GroundedBehavior(Behavior):
     """Base class for behaviours where the pet stands on a surface."""
 
@@ -71,31 +77,58 @@ class GroundedBehavior(Behavior):
         x = min(max(pet.body.position.x, bounds.left + 4), bounds.right - 4)
         pet.body.position = Vec2(x, pet.body.position.y)
 
-    def wall_blocking(self, direction: int, lookahead: float = 10.0) -> Optional[Wall]:
-        """The wall directly ahead at foot level, if any.
+    def wall_blocking(self, direction: int, lookahead: float = 12.0) -> Optional[Wall]:
+        """The climbable wall directly ahead of the pet, if any.
 
-        Walls whose bottom hangs above the pet (a floating window) don't block
-        - the pet walks past underneath. A wall counts only when it actually
-        spans the pet's feet, i.e. a window side reaching (near) this surface,
-        or a screen edge. This is what makes windows feel solid from the
-        ground and gives the pet something to climb.
+        Two things this must *not* do, both of which used to stop the pet ever
+        climbing an application window:
+
+        * **Don't filter on ``Wall.facing``.** ``facing`` says which side of the
+          wall is climbable, and the pet meets screen edges and window edges
+          from opposite sides: walking right, it reaches the screen's right edge
+          (facing -1) from the inside, but a window's *left* edge (facing +1)
+          from the outside. Filtering on facing therefore matched screen edges
+          only. Which side the pet is on is decided at attach time instead.
+
+        * **Don't require the wall to reach the pet's feet.** Windows float
+          above the taskbar, so a window edge almost never spans the floor the
+          pet walks on. A wall counts when it overlaps the pet's body at all -
+          it reaches up and grabs the ledge. A window entirely above its head
+          is still ignored, so the pet walks underneath.
         """
         pet = self.pet
         front_x = pet.body.position.x + direction * pet.half_width()
-        probe_y = pet.feet_y() - 6.0
+        feet = pet.feet_y()
+        head = feet - pet.body_height()
+        # Windows float above the taskbar, so their edges usually stop short of
+        # the floor. Allow one body-height of upward reach - the pet hops up and
+        # grabs a ledge just overhead - or floating windows would be unclimbable
+        # from the ground. Anything higher is still walked under.
+        reach_up = pet.body_height() * REACH_UP_BODIES
         best: Optional[Wall] = None
         best_dist = lookahead
         for wall in self.env.walls:
-            if wall.facing != -direction:
-                continue  # climbable face must point back toward the pet
             distance = (wall.x - front_x) * direction
             if distance < -pet.half_width() or distance > best_dist:
                 continue
-            if not (wall.y0 <= probe_y <= wall.y1):
-                continue  # hangs above (or starts below) the pet's feet
+            if wall.y0 > feet or wall.y1 < head - reach_up:
+                continue  # entirely below the feet, or out of reach overhead
             best = wall
             best_dist = max(distance, 0.0)
         return best
 
     def climb_allowed(self) -> bool:
-        return "climb" in self.config.enabled_behaviors and self.pet.state.has("climb")
+        """Whether bumping into a wall may turn into a climb.
+
+        Checks the behaviour mode as well as the enabled list: "calm" zeroes
+        the climb weight, and a mode that says the pet doesn't climb must also
+        stop it climbing walls it happens to walk into - otherwise the setting
+        only governs *spontaneous* climbs and the pet still scales windows.
+        """
+        if "climb" not in self.config.enabled_behaviors:
+            return False
+        if not self.pet.state.has("climb"):
+            return False
+        from .autonomy import MODE_WEIGHTS
+
+        return MODE_WEIGHTS.get(self.config.mode, {}).get("climb", 1.0) > 0

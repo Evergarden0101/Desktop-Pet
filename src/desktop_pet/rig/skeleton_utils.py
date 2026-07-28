@@ -37,6 +37,38 @@ def stand_offset_of(skeleton: Skeleton) -> float:
     return lowest
 
 
+def rise_of(skeleton: Skeleton) -> float:
+    """Vertical distance (rig units) from the root *up* to the highest point.
+
+    The counterpart of :func:`stand_offset_of`. Together they give the rig's
+    full height, which matters for rigs whose art sits entirely above the root
+    - a legless "cutout" character has a stand offset of zero but is not a
+    zero-height pet.
+    """
+    saved_scale = skeleton.scale
+    saved_facing = skeleton.facing
+    saved_root = skeleton.root_position
+    saved_angles = skeleton.snapshot()
+
+    skeleton.scale = 1.0
+    skeleton.facing = 1
+    skeleton.root_position = Vec2(0.0, 0.0)
+    skeleton.reset_to_rest()
+    skeleton.solve()
+
+    highest = 0.0
+    for name in skeleton.bones:
+        tip = skeleton.tip_scaled_of(name)
+        highest = min(highest, tip.y, skeleton.bones[name].world_pos.y)
+
+    skeleton.scale = saved_scale
+    skeleton.facing = saved_facing
+    skeleton.root_position = saved_root
+    skeleton.apply(saved_angles)
+    skeleton.solve()
+    return -highest
+
+
 def rest_span(skeleton: Skeleton) -> tuple[float, float]:
     """Return (width, height) of the rest-pose bounding box in rig units."""
     saved_angles = skeleton.snapshot()

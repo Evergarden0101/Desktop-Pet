@@ -32,10 +32,16 @@ def test_content_bounding_box_trims_transparency():
     assert (x1 - x0) < img.width  # trimmed horizontally
 
 
-def test_auto_humanoid_extracts_all_standard_parts():
+def test_auto_humanoid_extracts_the_core_parts():
+    """Head, torso, hips and both legs are always cut.
+
+    Arms are conditional by design: when they rest against the body they are
+    already inside the torso crop, and slicing them out again produces
+    duplicated limbs that flap about detached.
+    """
     img = synthetic_figure()
     result = extractor.extract_auto_humanoid(img)
-    for part in STANDARD_PARTS:
+    for part in extractor.CORE_PARTS:
         assert part in result.parts, f"missing {part}"
         sprite = result.parts[part].image
         assert sprite.width > 0 and sprite.height > 0
@@ -64,7 +70,7 @@ def test_pose_method_falls_back_without_mediapipe():
     img = synthetic_figure()
     # mediapipe isn't installed in CI; this must not raise, just fall back.
     result = extractor.extract_with_pose(img)
-    assert set(STANDARD_PARTS).issubset(result.parts.keys())
+    assert extractor.CORE_PARTS.issubset(result.parts.keys())
 
 
 def test_save_and_load_parts(tmp_path):

@@ -43,10 +43,30 @@ except Exception:  # pragma: no cover - only when Pillow missing
 #: on the bone's near joint and ``anchor`` on its far end, so the pair defines
 #: which way the artwork runs along the bone. The head is the special one: its
 #: joint is at the chin and the skull extends *up*, i.e. toward smaller Y.
+#
+# Bones that point *up* the body (hips -> torso -> head) need sprites that run
+# bottom-to-top: the joint is at the sprite's lower edge and the art extends
+# above it. Limb bones point down from their proximal joint and run the usual
+# top-to-bottom way. Getting the torso wrong is not a subtle bug - the pivot
+# and anchor collapse onto each other, the measured sprite axis becomes a few
+# pixels, and the part is then scaled up by an enormous factor.
 _PART_AXES: Dict[str, Tuple[Tuple[float, float], Tuple[float, float]]] = {
     "head": ((0.5, 0.93), (0.5, 0.05)),
+    "torso": ((0.5, 0.97), (0.5, 0.03)),
+    "hips": ((0.5, 0.92), (0.5, 0.08)),
 }
 _DEFAULT_AXIS = ((0.5, 0.06), (0.5, 0.94))
+
+#: Parts every articulated figure must yield for the cut to be trusted. Arms
+#: are deliberately absent: when they rest against the body they stay part of
+#: the torso sprite rather than being sliced out (see regions_from_silhouette).
+CORE_PARTS = frozenset(
+    {
+        "head", "torso", "hips",
+        "thigh_l", "shin_l", "foot_l",
+        "thigh_r", "shin_r", "foot_r",
+    }
+)
 
 
 def part_axis(name: str):
@@ -87,6 +107,8 @@ class ExtractionResult:
     #: Bone specs derived from the artwork's own proportions (character.json
     #: "skeleton"), when the silhouette could be measured.
     skeleton: Optional[List[dict]] = None
+    #: "figure" (fully articulated) or "cutout" (head + body only).
+    layout: str = "figure"
 
     def to_regions_dict(self) -> Dict[str, dict]:
         """Serialize as a ``regions`` extraction block for character.json."""
@@ -204,15 +226,19 @@ def extract_auto_humanoid(image) -> ExtractionResult:
         return _extract_bands(image, method="auto_humanoid")
 
     regions = regions_from_silhouette(shape)
-    # A believable humanoid yields most of the standard parts; if the geometry
-    # collapsed (tiny or overlapping rectangles), the bands are safer.
-    if len(regions) < len(STANDARD_PARTS) - 2:
+    # Sanity gate: if the geometry collapsed (tiny or overlapping rectangles),
+    # the proportion bands are safer. What counts as "enough" depends on the
+    # layout - a cutout is meant to be just head + body, and a figure whose
+    # arms stay inside the torso legitimately has no arm parts.
+    required = {"head", "torso"} if shape.layout == "cutout" else CORE_PARTS
+    if not required.issubset(regions):
         return _extract_bands(image, method="auto_humanoid")
 
     result = extract_regions(image, regions)
     result.method = "auto_humanoid"
     result.content_box = shape.box
     result.skeleton = skeleton_from_silhouette(shape)
+    result.layout = shape.layout
     return result
 
 
@@ -226,7 +252,7 @@ def regions_from_silhouette(shape) -> Dict[str, dict]:
     x0, y0, x1, y1 = shape.box
     regions: Dict[str, dict] = {}
 
-    def add(name: str, rect, pivot, anchor=None) -> None:
+    def add(name: str, rect, pivot=None, anchor=None) -> None:
         left, top, right, bottom = (int(round(v)) for v in rect)
         left = max(x0, left)
         right = min(x1, right)
@@ -234,46 +260,51 @@ def regions_from_silhouette(shape) -> Dict[str, dict]:
         bottom = min(y1, bottom)
         if right - left < 2 or bottom - top < 2:
             return
-        if anchor is None:
-            anchor = part_axis(name)[1]
+        default_pivot, default_anchor = part_axis(name)
         regions[name] = {
             "rect": [left, top, right, bottom],
-            "pivot": list(pivot),
-            "anchor": list(anchor),
+            "pivot": list(pivot if pivot is not None else default_pivot),
+            "anchor": list(anchor if anchor is not None else default_anchor),
         }
 
     # ---- head: top of the figure down through the neck ---------------------
     head_left, head_right = _extent_between(shape, y0, shape.neck_y)
     pad = (head_right - head_left) * 0.05
     head_bottom = shape.neck_y + (shape.shoulder_y - shape.neck_y) * 0.5
-    add("head", (head_left - pad, y0, head_right + pad, head_bottom), (0.5, 0.93))
+    add("head", (head_left - pad, y0, head_right + pad, head_bottom))
+
+    if shape.layout == "cutout":
+        # No usable legs in the picture (a bust or waist-up crop): keep the
+        # body as one piece so the pet still looks exactly like the source.
+        body_left, body_right = _extent_between(shape, shape.shoulder_y, y1)
+        add("torso", (body_left, shape.neck_y, body_right, y1))
+        return regions
 
     # ---- torso and hips ----------------------------------------------------
     torso_left, torso_right = _core_extent(shape, shape.shoulder_y, shape.waist_y)
-    add("torso", (torso_left, shape.neck_y, torso_right, shape.hip_y), (0.5, 0.97))
+    add("torso", (torso_left, shape.neck_y, torso_right, shape.hip_y))
 
     hip_left, hip_right = _core_extent(shape, shape.hip_y, shape.crotch_y)
-    add("hips", (hip_left, shape.hip_y, hip_right, shape.crotch_y), (0.5, 0.5))
+    add("hips", (hip_left, shape.hip_y, hip_right, shape.crotch_y))
 
     # ---- arms --------------------------------------------------------------
-    arm_top = shape.shoulder_y
-    arm_bottom = shape.crotch_y
-    arm_span = max(1.0, arm_bottom - arm_top)
+    # Only cut arms out when they are actually separable from the body. If they
+    # rest against (or are folded across) the torso - which is most photographs
+    # - the torso crop already contains them, and slicing thin strips off its
+    # edges just duplicates those pixels into limbs that then swing around as
+    # detached blobs. Leaving them baked into the torso looks far better; the
+    # body simply leans as one piece.
     if shape.arms_detached and shape.arm_bounds:
+        arm_top = shape.shoulder_y
+        arm_bottom = shape.crotch_y
+        arm_span = max(1.0, arm_bottom - arm_top)
         (left_lo, left_hi), (right_lo, right_hi) = shape.arm_bounds
-    else:
-        # Arms lie against the body: take the outer slice of the torso band.
-        body_left, body_right = _extent_between(shape, arm_top, arm_bottom)
-        arm_width = max(3.0, (body_right - body_left) * 0.22)
-        left_lo, left_hi = body_left, body_left + arm_width
-        right_lo, right_hi = body_right - arm_width, body_right
-
-    for side, (lo, hi) in (("l", (left_lo, left_hi)), ("r", (right_lo, right_hi))):
-        upper_bottom = arm_top + arm_span * 0.42
-        fore_bottom = arm_top + arm_span * 0.78
-        add(f"upper_arm_{side}", (lo, arm_top, hi, upper_bottom), (0.5, 0.08))
-        add(f"forearm_{side}", (lo, upper_bottom, hi, fore_bottom), (0.5, 0.05))
-        add(f"hand_{side}", (lo, fore_bottom, hi, arm_bottom), (0.5, 0.1))
+        for side, (lo, hi) in (("l", (left_lo, left_hi)), ("r", (right_lo, right_hi))):
+            upper_bottom = arm_top + arm_span * 0.42
+            fore_bottom = arm_top + arm_span * 0.78
+            add(f"upper_arm_{side}", (lo, arm_top, hi, upper_bottom))
+            add(f"forearm_{side}", (lo, upper_bottom, hi, fore_bottom))
+            add(f"hand_{side}", (lo, fore_bottom, hi, arm_bottom))
 
     # ---- legs --------------------------------------------------------------
     leg_top = shape.crotch_y
@@ -297,9 +328,9 @@ def regions_from_silhouette(shape) -> Dict[str, dict]:
     for side, (lo, hi) in (("l", (legs_left, split)), ("r", (split, legs_right))):
         if hi - lo < 2:
             continue
-        add(f"thigh_{side}", (lo, leg_top, hi, knee_y), (0.5, 0.06))
-        add(f"shin_{side}", (lo, knee_y, hi, foot_top), (0.5, 0.04))
-        add(f"foot_{side}", (lo - 2, foot_top, hi + 2, y1), (0.5, 0.2))
+        add(f"thigh_{side}", (lo, leg_top, hi, knee_y))
+        add(f"shin_{side}", (lo, knee_y, hi, foot_top))
+        add(f"foot_{side}", (lo - 2, foot_top, hi + 2, y1), pivot=(0.5, 0.2))
 
     return regions
 
@@ -315,6 +346,9 @@ def skeleton_from_silhouette(shape) -> List[dict]:
     """
     _, y0, _, y1 = shape.box
     height = max(1.0, y1 - y0)
+
+    if shape.layout == "cutout":
+        return _cutout_skeleton(shape)
 
     head_len = max(6.0, shape.neck_y - y0)
     torso_len = max(6.0, shape.hip_y - shape.shoulder_y)
@@ -349,8 +383,18 @@ def skeleton_from_silhouette(shape) -> List[dict]:
         "thigh_r": L(thigh), "shin_r": L(shin), "foot_r": L(foot),
     }
 
+    # Arms that could not be separated stay baked into the torso sprite, so the
+    # rig must not carry arm bones for them - an bone with no part would just
+    # animate nothing while widening the pet's bounds.
+    skip = set()
+    if not shape.arms_detached:
+        for side in ("l", "r"):
+            skip |= {f"upper_arm_{side}", f"forearm_{side}", f"hand_{side}"}
+
     bones: List[dict] = []
     for spec in DEFAULT_HUMANOID:
+        if spec.name in skip:
+            continue
         bones.append(
             {
                 "name": spec.name,
@@ -362,6 +406,31 @@ def skeleton_from_silhouette(shape) -> List[dict]:
             }
         )
     return bones
+
+
+def _cutout_skeleton(shape) -> List[dict]:
+    """Two-bone rig for pictures that have no usable legs.
+
+    A bust or waist-up photo can't be articulated honestly, but it still makes
+    a fine pet: the body stays one piece and only leans and bobs, driven by the
+    ``torso``/``head`` deltas the ordinary poses already contain. Behaviours
+    address missing bones harmlessly - blending skips unknown names and the
+    climbing IK catches the lookup - so walking, climbing and sitting all work.
+    """
+    _, y0, _, y1 = shape.box
+    height = max(1.0, y1 - y0)
+    unit = 170.0 / height
+
+    head_len = max(6.0, (shape.neck_y - y0)) * unit
+    body_len = max(6.0, (y1 - shape.neck_y)) * unit
+    return [
+        {"name": "hips", "parent": None, "length": 2.0, "rest_angle": -1.5708,
+         "part": None, "z_order": 5},
+        {"name": "torso", "parent": "hips", "length": round(body_len, 2),
+         "rest_angle": 0.0, "part": "torso", "z_order": 6},
+        {"name": "head", "parent": "torso", "length": round(head_len, 2),
+         "rest_angle": 0.0, "part": "head", "z_order": 10},
+    ]
 
 
 def _extent_between(shape, top: float, bottom: float):

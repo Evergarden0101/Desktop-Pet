@@ -177,6 +177,33 @@ class PoseLibrary:
         pose["shin_r"] = pose.get("shin_r", 0.0) - swing
         return pose
 
+    def sit_ledge(self, phase: float) -> Pose:
+        """Perched on an edge with the legs hanging over it.
+
+        Used when the pet sits on a window title bar or the taskbar: the pelvis
+        rests *on* the edge and the shins drop below it, so the legs swing down
+        across the window underneath. The thighs are near-horizontal and the
+        knees bend a full quarter turn so the shins point straight down.
+        """
+        swing = math.sin(phase * TAU) * 0.22
+        counter = math.sin(phase * TAU + 0.7) * 0.22
+        return self._pose(
+            {
+                "torso": -0.05,
+                "head": 0.05,
+                # Thighs forward to horizontal, shins straight down and swinging.
+                "thigh_l": -1.62,
+                "shin_l": 1.52 + swing,
+                "thigh_r": -1.58,
+                "shin_r": 1.52 + counter,
+                # Hands resting on the ledge beside the hips.
+                "upper_arm_l": -0.30,
+                "forearm_l": 0.25,
+                "upper_arm_r": 0.30,
+                "forearm_r": 0.25,
+            }
+        )
+
     def sleep(self) -> Pose:
         """Lying down / curled up."""
         return self._pose(
