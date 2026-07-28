@@ -24,6 +24,8 @@ class LoadedCharacter:
     parts: Dict[str, BodyPart] = field(default_factory=dict)
     render: Dict[str, object] = field(default_factory=lambda: {"mode": "shapes"})
     scale: float = 1.0
+    #: Speech-bubble overrides from the pack (``behaviors.phrases``).
+    phrases: Optional[Dict[str, list]] = None
 
 
 def _build_skeleton(pack: CharacterPack) -> Skeleton:
@@ -52,7 +54,14 @@ def load_character(pack: CharacterPack, use_cache: bool = True) -> LoadedCharact
             # No usable art: fall back to shapes so the pet still appears.
             render["mode"] = "shapes"
 
-    return LoadedCharacter(skeleton=skeleton, parts=parts, render=render, scale=pack.scale)
+    phrases = pack.behavior_overrides.get("phrases") if pack.behavior_overrides else None
+    return LoadedCharacter(
+        skeleton=skeleton,
+        parts=parts,
+        render=render,
+        scale=pack.scale,
+        phrases=phrases if isinstance(phrases, dict) else None,
+    )
 
 
 def _load_or_extract_parts(pack: CharacterPack, use_cache: bool) -> Dict[str, BodyPart]:

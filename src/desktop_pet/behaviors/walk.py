@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ..core.phrases import pick
 from .locomotion import GroundedBehavior
 
 
@@ -38,6 +39,18 @@ class WalkBehavior(GroundedBehavior):
         result = self.walk_step(dt, self._speed(), self.direction)
         if result:
             return result
+
+        # Something solid ahead? A window side or screen edge at foot level is
+        # an invitation to climb; otherwise it's a wall to turn around at.
+        wall = self.wall_blocking(self.direction)
+        if wall is not None:
+            if self.climb_allowed() and pet.rng.random() < self.config.climb_chance:
+                pet.say(pick(pet.rng, "climb"), 2.0)
+                return "climb"
+            if self.target_x is not None:
+                return "idle"  # destination is blocked; give up gracefully
+            pet.say(pick(pet.rng, "blocked"), 1.5)
+            self.direction = -self.direction
 
         # Bounce off the world edges instead of walking into the void.
         bounds = self.env.bounds

@@ -80,7 +80,7 @@ class WaveBehavior(_OneShotPose):
 
     def on_enter(self, **kwargs) -> None:
         super().on_enter(**kwargs)
-        self.pet.say("hi!", 2.0)
+        self.pet.say_category("greet", 2.5)
         self.pet.stats.play(6.0)
 
 
@@ -91,5 +91,5 @@ class CheerBehavior(_OneShotPose):
 
     def on_enter(self, **kwargs) -> None:
         super().on_enter(**kwargs)
-        self.pet.say("yay!", 2.0)
+        self.pet.say_category("poke", 2.5)
         self.pet.stats.play(10.0)

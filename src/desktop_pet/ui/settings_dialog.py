@@ -12,6 +12,7 @@ from typing import Dict, TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -19,12 +20,14 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from ..behaviors import DEFAULT_BEHAVIORS
+from ..behaviors.autonomy import MODE_LABELS
 from ..platform.autostart import set_start_on_login
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -116,17 +119,29 @@ class SettingsDialog(QDialog):
         box = QGroupBox("Interaction")
         form = QFormLayout(box)
 
+        self.mode_combo = QComboBox()
+        for mode_name, mode_label in MODE_LABELS.items():
+            self.mode_combo.addItem(mode_label, mode_name)
+        index = self.mode_combo.findData(self.config.mode)
+        self.mode_combo.setCurrentIndex(max(0, index))
+        form.addRow("Mode", self.mode_combo)
+
         self.windows_check = QCheckBox("Walk on and climb application windows")
         self.windows_check.setChecked(self.config.interact_with_windows)
         form.addRow(self.windows_check)
 
+        self.climb_chance_spin = QDoubleSpinBox()
+        self.climb_chance_spin.setRange(0.0, 1.0)
+        self.climb_chance_spin.setSingleStep(0.05)
+        self.climb_chance_spin.setValue(self.config.climb_chance)
+        self.climb_chance_spin.setToolTip(
+            "How eagerly the pet climbs a window edge it bumps into (0-1)."
+        )
+        form.addRow("Climb eagerness", self.climb_chance_spin)
+
         self.gravity_check = QCheckBox("Gravity (pet falls and can be thrown)")
         self.gravity_check.setChecked(self.config.gravity_enabled)
         form.addRow(self.gravity_check)
-
-        self.follow_check = QCheckBox("Follow the mouse cursor")
-        self.follow_check.setChecked(self.config.follow_cursor)
-        form.addRow(self.follow_check)
 
         self.speech_check = QCheckBox("Show speech bubbles")
         self.speech_check.setChecked(self.config.show_speech_bubbles)
@@ -139,7 +154,14 @@ class SettingsDialog(QDialog):
         self.autostart_check = QCheckBox("Start automatically at login")
         self.autostart_check.setChecked(self.config.start_on_login)
         form.addRow(self.autostart_check)
+
+        characters = QPushButton("Manage characters / add from a picture...")
+        characters.clicked.connect(self._open_characters)
+        form.addRow(characters)
         return box
+
+    def _open_characters(self) -> None:
+        self.app.open_characters()
 
     def _behaviors_group(self) -> QWidget:
         box = QGroupBox("Allowed autonomous actions")
@@ -180,9 +202,11 @@ class SettingsDialog(QDialog):
         cfg.creep_speed = self.creep_spin.value()
         cfg.autonomy_min = self.autonomy_min.value()
         cfg.autonomy_max = max(self.autonomy_max.value(), self.autonomy_min.value())
+        cfg.mode = self.mode_combo.currentData() or "free"
+        cfg.follow_cursor = cfg.mode == "follow"
+        cfg.climb_chance = self.climb_chance_spin.value()
         cfg.interact_with_windows = self.windows_check.isChecked()
         cfg.gravity_enabled = self.gravity_check.isChecked()
-        cfg.follow_cursor = self.follow_check.isChecked()
         cfg.show_speech_bubbles = self.speech_check.isChecked()
         cfg.stats_enabled = self.stats_check.isChecked()
         cfg.start_on_login = self.autostart_check.isChecked()

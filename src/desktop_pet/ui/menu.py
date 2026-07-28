@@ -11,6 +11,8 @@ from typing import Optional, TYPE_CHECKING
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu
 
+from ..behaviors.autonomy import MODE_LABELS
+
 if TYPE_CHECKING:  # pragma: no cover
     from ..core.pet import Pet
     from .controller import PetApp
@@ -48,16 +50,27 @@ def build_pet_menu(app: "PetApp", pet: Optional["Pet"] = None) -> QMenu:
         feed = menu.addAction("Feed")
         feed.triggered.connect(lambda: app.feed(pet))
 
-    # --- Toggles --------------------------------------------------------- #
-    follow = menu.addAction("Follow cursor")
-    follow.setCheckable(True)
-    follow.setChecked(app.config.follow_cursor)
-    follow.toggled.connect(app.toggle_follow_cursor)
+    # --- Mode ------------------------------------------------------------ #
+    mode_menu = menu.addMenu("Mode")
+    mode_group = QActionGroup(mode_menu)
+    mode_group.setExclusive(True)
+    for mode_name, mode_label in MODE_LABELS.items():
+        act = mode_menu.addAction(mode_label)
+        act.setCheckable(True)
+        act.setChecked(app.config.mode == mode_name)
+        mode_group.addAction(act)
+        act.triggered.connect(_bind_mode(app, mode_name))
 
+    # --- Toggles --------------------------------------------------------- #
     gravity = menu.addAction("Gravity")
     gravity.setCheckable(True)
     gravity.setChecked(app.config.gravity_enabled)
     gravity.toggled.connect(app.toggle_gravity)
+
+    windows = menu.addAction("Play on app windows")
+    windows.setCheckable(True)
+    windows.setChecked(app.config.interact_with_windows)
+    windows.toggled.connect(app.toggle_window_interaction)
 
     # --- Size ------------------------------------------------------------ #
     size_menu = menu.addMenu("Size")
@@ -71,17 +84,21 @@ def build_pet_menu(app: "PetApp", pet: Optional["Pet"] = None) -> QMenu:
         act.triggered.connect(_bind_scale(app, scale))
 
     # --- Character ------------------------------------------------------- #
+    char_menu = menu.addMenu("Character")
     chars = app.available_characters()
-    if len(chars) > 1:
-        char_menu = menu.addMenu("Character")
-        char_group = QActionGroup(char_menu)
-        char_group.setExclusive(True)
-        for name in chars:
-            act = char_menu.addAction(name)
-            act.setCheckable(True)
-            act.setChecked(name == app.character_name)
-            char_group.addAction(act)
-            act.triggered.connect(_bind_character(app, name))
+    char_group = QActionGroup(char_menu)
+    char_group.setExclusive(True)
+    for name in chars:
+        act = char_menu.addAction(name)
+        act.setCheckable(True)
+        act.setChecked(name == app.character_name)
+        char_group.addAction(act)
+        act.triggered.connect(_bind_character(app, name))
+    char_menu.addSeparator()
+    manage = char_menu.addAction("Manage characters...")
+    manage.triggered.connect(lambda _checked=False: app.open_characters())
+    add_char = char_menu.addAction("Add from a picture...")
+    add_char.triggered.connect(lambda _checked=False: app.open_characters())
 
     menu.addSeparator()
 
@@ -125,5 +142,12 @@ def _bind_scale(app, scale):
 def _bind_character(app, name):
     def handler(_checked=False):
         app.set_character(name)
+
+    return handler
+
+
+def _bind_mode(app, mode):
+    def handler(_checked=False):
+        app.set_mode(mode)
 
     return handler

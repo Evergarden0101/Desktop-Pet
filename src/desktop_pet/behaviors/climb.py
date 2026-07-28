@@ -31,9 +31,19 @@ class ClimbBehavior(Behavior):
         pet.body.on_ground = False
         pet.body.stop()
         self.direction = direction  # -1 = up (screen y decreases), +1 = down
-        self._wall = wall or self.env.nearest_wall(pet.body.position, self.grab_radius)
-        if self._wall is not None:
-            self._attach(self._wall)
+        target = wall or self.env.nearest_wall(pet.body.position, self.grab_radius)
+        # Remember *which* wall by identity, not by object: the Environment is
+        # rebuilt every frame, so the instance is gone next tick. Tracking the
+        # identity keeps the pet on one edge instead of hopping between a window
+        # side and a screen edge mid-climb.
+        self._wall_id = self._identity(target) if target else None
+        self._stuck = 0.0
+        if target is not None:
+            self._attach(target)
+
+    @staticmethod
+    def _identity(wall: Wall):
+        return (wall.window_handle, wall.facing, wall.kind)
 
     def _attach(self, wall: Wall) -> None:
         pet = self.pet
@@ -43,8 +53,27 @@ class ClimbBehavior(Behavior):
         pet.facing = -wall.facing  # face the wall
 
     def _current_wall(self) -> Optional[Wall]:
-        """Re-resolve the wall we're climbing (walls are rebuilt each frame)."""
-        return self.env.nearest_wall(self.pet.body.position, self.grab_radius)
+        """Re-resolve the wall being climbed (walls are rebuilt every frame).
+
+        Matches the remembered identity first - and only within a tolerance of
+        the pet, so a window that gets dragged away drops the pet rather than
+        teleporting it across the desktop.
+        """
+        pet = self.pet
+        if self._wall_id is not None:
+            for wall in self.env.walls:
+                if self._identity(wall) != self._wall_id:
+                    continue
+                if abs(wall.x - pet.body.position.x) > self.grab_radius * 2:
+                    continue
+                if not wall.contains_y(pet.body.position.y, self.grab_radius):
+                    continue
+                return wall
+        # Lost it (window closed/moved): fall back to whatever is in reach.
+        fallback = self.env.nearest_wall(pet.body.position, self.grab_radius)
+        if fallback is not None:
+            self._wall_id = self._identity(fallback)
+        return fallback
 
     def update(self, dt: float) -> Optional[str]:
         super().update(dt)
@@ -68,12 +97,24 @@ class ClimbBehavior(Behavior):
             surface = self._top_surface(wall)
             if surface is not None:
                 pet.set_feet_on(surface)
+                pet.say_category("sit", 2.5)
+                # Settle in on the ledge it just conquered.
+                if pet.state.has("sit") and pet.rng.random() < 0.5:
+                    return "sit"
                 return "idle"
             return "fall"
 
         # Reached the bottom of the wall - let go.
         if self.direction > 0 and pet.body.position.y >= wall.y1 - pet.stand_offset:
             return "fall"
+
+        # If a surface appears under the feet on the way down, stand on it
+        # instead of sliding past (window stacked on window).
+        if self.direction > 0:
+            support = self.env.surface_under(pet.body.position.x, pet.feet_y(), 8.0)
+            if support is not None:
+                pet.set_feet_on(support)
+                return "idle"
 
         pet.skeleton.blend(self.poses.climb(pet.anim_phase), min(1.0, dt * 8))
         self._reach_hands(wall)

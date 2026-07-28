@@ -27,6 +27,7 @@ tested **without a display**. Only the `ui` layer imports PySide6.
 ```
 src/desktop_pet/
 ├── config.py            AppConfig (user settings) + CharacterPack (a character)
+├── characters.py        Character library: import/rename/duplicate/delete (no Qt)
 ├── cli.py / __main__.py Command line: run | list | extract | new
 ├── app.py               Bootstraps QApplication and PetApp
 ├── core/                ← pure logic, no Qt / no Win32
@@ -36,6 +37,7 @@ src/desktop_pet/
 │   ├── environment.py   DesktopSnapshot -> walkable Surfaces + climbable Walls
 │   ├── state_machine.py Behaviour state machine
 │   ├── events.py        Tiny pub/sub bus
+│   ├── phrases.py       Bilingual (EN/中文) speech-bubble pools by category
 │   └── pet.py           Pet entity: skeleton + physics + stats + state machine
 ├── rig/
 │   ├── body_parts.py    BodyPart, the default humanoid BoneSpec rig
@@ -56,6 +58,7 @@ src/desktop_pet/
     ├── controller.py    PetApp: owns pets, the frame loop, the tray
     ├── pet_window.py    Transparent click-through overlay (per-pixel mask)
     ├── renderer.py      Draw the rig as shapes or as image parts
+    ├── character_dialog.py  Character manager + "add from a picture" importer
     ├── menu.py / tray.py / settings_dialog.py / icon.py / imaging.py
 ```
 
@@ -100,6 +103,18 @@ overlay.refresh()         # repaint + rebuild the click-through mask
    below the visible screen and "disappears". (Debug escape hatch:
    `DESKTOP_PET_QT_SCALING=1`.)
 
+7. **`bounding_rect` is the paint region, not the hit-box.** The overlay's
+   per-frame mask both routes clicks *and* clips painting, so anything drawn
+   outside `Pet.bounding_rect()` is simply invisible — this is why the speech
+   bubble is reserved there via `speech_rect()`. Mouse hit-testing uses
+   `body_rect()`/`contains_point` instead, so the bubble never becomes a
+   grab handle. Add new decorations to `bounding_rect` or they won't show.
+
+8. **Resizing anchors the feet.** `Pet.rescale` recomputes `stand_offset` and
+   then moves the root so `feet_y()` is unchanged (preserving any crouch ratio).
+   Scaling without this pushes the feet *through* the floor — a large pet ends
+   up below the screen.
+
 ## Running, testing, building
 
 ```bash
@@ -131,6 +146,12 @@ GitHub Release.
   selectable via `AppConfig.enabled_behaviors`.
 - **New pose:** add a method to `rig/poses.py::PoseLibrary` returning
   `{bone_name: local_angle}` as small deltas from rest.
+- **New phrase:** add to a category in `core/phrases.py` (keep both an English
+  and a Chinese line in every category — a test enforces this), then say it with
+  `pet.say_category("<category>")`. Packs override via `behaviors.phrases`.
+- **New mode:** add an entry to `behaviors/autonomy.py::MODE_WEIGHTS` (weight
+  multipliers per behaviour) plus a label in `MODE_LABELS`; menus and the
+  settings dialog pick it up automatically.
 - **New character:** drop a folder in the user characters dir with a
   `character.json` (+ optional `texture.png`). See `docs/characters.md`.
 - **New platform backend:** implement `PlatformBackend.snapshot()` and wire it

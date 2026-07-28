@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..core.geometry import Vec2
+from ..core.phrases import pick
 from .base import Behavior
 
 
@@ -41,6 +42,16 @@ class FallBehavior(Behavior):
             pet.body.position = Vec2(bounds.right - 4, pet.body.position.y)
             pet.body.velocity = Vec2(-abs(pet.body.velocity.x) * 0.5, pet.body.velocity.y)
 
+        # Below-the-world recovery: if the feet are already under every floor
+        # (a rescale or monitor change can cause this), no surface is "below"
+        # to land on and the pet would fall forever off-screen. Snap back up.
+        floor_y = self.env.world_floor()
+        if pet.feet_y() > floor_y + 2:
+            pet.body.position = Vec2(pet.body.position.x, floor_y - pet.ground_offset)
+            pet.body.stop()
+            pet.body.on_ground = True
+            return "idle"
+
         # Swept landing test: land on the first surface the feet crossed this
         # frame (checking the whole [prev_feet, new_feet] span prevents fast
         # falls from tunnelling straight through thin ledges).
@@ -51,7 +62,7 @@ class FallBehavior(Behavior):
             impact = pet.body.velocity.y
             pet.body.stop()
             if impact > 900:
-                pet.say("oof!", 1.2)
+                pet.say(pick(pet.rng, "land_hard"), 1.5)
                 return "land"
             return "idle"
 

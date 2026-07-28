@@ -23,6 +23,7 @@ from ..config import AppConfig, CharacterPack, discover_characters, resolve_char
 from ..core.environment import Environment
 from ..core.geometry import Vec2
 from ..core.pet import Pet
+from ..core.phrases import merged_pool
 from ..platform.base import get_backend
 from ..rig.loader import LoadedCharacter, load_character
 from .imaging import pil_to_qpixmap
@@ -114,6 +115,7 @@ class PetApp:
 
         pet = Pet(self.config, skeleton=_clone_skeleton(loaded.skeleton), pet_id=pet_id)
         pet.rescale(self.config.scale)
+        pet.phrases = merged_pool(loaded.phrases)
         register_default_behaviors(pet)
 
         env = Environment(self.backend.snapshot(), self.config.interact_with_windows)
@@ -130,7 +132,7 @@ class PetApp:
             floor = env.world_floor()
         pet.body.position = Vec2(start_x, floor - pet.stand_offset)
         pet.state.change("idle")
-        pet.say("hi!", 2.0)
+        pet.say_category("greet", 2.5)
 
         renderer = PetRenderer(loaded.render)
         if loaded.parts:
@@ -187,7 +189,7 @@ class PetApp:
 
     def feed(self, pet: Pet) -> None:
         pet.stats.feed(35.0)
-        pet.say("yum!", 2.0)
+        pet.say_category("feed", 2.5)
         self.trigger(pet, "cheer")
 
     def summon(self) -> None:
@@ -209,7 +211,7 @@ class PetApp:
             pet.body.position = Vec2(x, work.top + work.height * 0.3)
             pet.body.stop()
             pet.state.change("fall", force=True)
-            pet.say("here!", 2.0)
+            pet.say_category("summon", 2.5)
         self.overlay.raise_()
 
     def toggle_follow_cursor(self, enabled: bool) -> None:
@@ -220,6 +222,10 @@ class PetApp:
         self.config.gravity_enabled = enabled
         for pet in self.pets:
             pet.body.gravity_enabled = enabled
+        self.config.save()
+
+    def toggle_window_interaction(self, enabled: bool) -> None:
+        self.config.interact_with_windows = enabled
         self.config.save()
 
     def _on_poke(self, pet: Pet) -> None:
@@ -237,6 +243,31 @@ class PetApp:
 
         dialog = SettingsDialog(self)
         dialog.exec()
+
+    def open_characters(self) -> None:
+        from .character_dialog import CharacterDialog
+
+        dialog = CharacterDialog(self)
+        dialog.exec()
+        self._refresh_menus()
+
+    def set_mode(self, mode: str) -> None:
+        """Switch the autonomy personality preset (see behaviors.autonomy)."""
+        self.config.mode = mode
+        # "follow" is the cursor-chasing preset; keep the old flag in sync so
+        # both the menu toggle and the mode selector agree.
+        self.config.follow_cursor = mode == "follow"
+        self.config.save()
+        for pet in self.pets:
+            pet.say_category("greet", 2.0)
+        self._refresh_menus()
+
+    def _refresh_menus(self) -> None:
+        if self.tray is not None:
+            try:
+                self.tray.rebuild_menu()
+            except Exception:
+                pass
 
     def quit(self) -> None:
         self.shutdown()

@@ -34,7 +34,7 @@ class SleepBehavior(GroundedBehavior):
         # Lie lower to the ground.
         self.pet.set_ground_offset(self.pet.stand_offset * 0.35)
         self.duration = kwargs.get("duration", 12.0)
-        self.pet.say("zzz...", self.duration)
+        self.pet.say_category("sleep", min(self.duration, 4.0))
 
     def update(self, dt: float) -> Optional[str]:
         super().update(dt)

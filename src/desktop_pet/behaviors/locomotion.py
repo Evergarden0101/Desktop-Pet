@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..core.environment import Surface
+from ..core.environment import Surface, Wall
 from ..core.geometry import Vec2
 from .base import Behavior
 
@@ -70,3 +70,32 @@ class GroundedBehavior(Behavior):
         bounds = self.env.bounds
         x = min(max(pet.body.position.x, bounds.left + 4), bounds.right - 4)
         pet.body.position = Vec2(x, pet.body.position.y)
+
+    def wall_blocking(self, direction: int, lookahead: float = 10.0) -> Optional[Wall]:
+        """The wall directly ahead at foot level, if any.
+
+        Walls whose bottom hangs above the pet (a floating window) don't block
+        - the pet walks past underneath. A wall counts only when it actually
+        spans the pet's feet, i.e. a window side reaching (near) this surface,
+        or a screen edge. This is what makes windows feel solid from the
+        ground and gives the pet something to climb.
+        """
+        pet = self.pet
+        front_x = pet.body.position.x + direction * pet.half_width()
+        probe_y = pet.feet_y() - 6.0
+        best: Optional[Wall] = None
+        best_dist = lookahead
+        for wall in self.env.walls:
+            if wall.facing != -direction:
+                continue  # climbable face must point back toward the pet
+            distance = (wall.x - front_x) * direction
+            if distance < -pet.half_width() or distance > best_dist:
+                continue
+            if not (wall.y0 <= probe_y <= wall.y1):
+                continue  # hangs above (or starts below) the pet's feet
+            best = wall
+            best_dist = max(distance, 0.0)
+        return best
+
+    def climb_allowed(self) -> bool:
+        return "climb" in self.config.enabled_behaviors and self.pet.state.has("climb")

@@ -21,7 +21,7 @@ class CreepBehavior(GroundedBehavior):
             self.direction = 1 if target_x > self.pet.body.position.x else -1
         else:
             self.direction = self.pet.rng.choice([-1, 1])
-        self.pet.say("...", 1.5)
+        self.pet.say_category("idle", 2.0)
 
     def update(self, dt: float) -> Optional[str]:
         super().update(dt)

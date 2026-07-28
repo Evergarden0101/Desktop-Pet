@@ -12,14 +12,21 @@ Select a character from the tray/right-click menu, or with
 
 ## Quick start
 
+**In the app:** right-click the pet (or tray icon) → **Character → Add from a
+picture…** (also under **Settings → Manage characters**). Pick an image, name
+it, press **Add character**. That same window previews, switches, renames,
+duplicates and deletes characters.
+
+**From the command line:**
+
 ```bash
 # Cut any image into a ready-to-use pack in your user characters dir
 desktop-pet extract hero.png --name Hero
 desktop-pet run --character Hero
 ```
 
-That writes `Hero/character.json`, copies the image to `Hero/texture.png`, and
-caches the cut sprites in `Hero/parts/`.
+Either way this writes `Hero/character.json`, copies the image to
+`Hero/texture.png`, and caches the cut sprites in `Hero/parts/`.
 
 ## `character.json` reference
 
@@ -66,7 +73,17 @@ forward-compatible.
   ],
 
   // ── Optional behaviour tuning for this character ─────────────────────
-  "behaviors": { "walk_speed": 110 }
+  "behaviors": {
+    "walk_speed": 110,
+    // Give the character its own voice. Any category you list replaces the
+    // built-in one; unlisted categories keep the defaults. Categories:
+    // greet, idle, walk, climb, sit, sleep, wake, feed, poke, drag,
+    // land_hard, chase, summon, hungry, tired, blocked.
+    "phrases": {
+      "greet": ["yo!", "在下登场!"],
+      "climb": ["up up up!", "看我爬!"]
+    }
+  }
 }
 ```
 

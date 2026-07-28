@@ -29,6 +29,7 @@ class DragBehavior(Behavior):
         # Offset between cursor and root so the pet doesn't snap to the cursor.
         self.grab_offset = grab_offset or Vec2(0.0, -pet.stand_offset * 0.5)
         self.cursor = pet.body.position - self.grab_offset
+        pet.say_category("drag", 2.5)
 
     def on_event(self, event: str, **data) -> Optional[str]:
         if event == "drag_move":

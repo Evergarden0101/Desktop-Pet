@@ -88,6 +88,16 @@ class AppConfig:
     autonomy_max: float = 12.0
     autonomy_enabled: bool = True
 
+    # Behaviour mode - the "personality" preset the autonomy brain runs under.
+    #   "free"     : the default; wanders, climbs windows, naps, does its thing
+    #   "mischief" : strongly prefers climbing/creeping over your windows
+    #   "calm"     : mostly stays put, gentle idling only
+    #   "follow"   : sticks close to the mouse cursor
+    mode: str = "free"
+
+    # Chance (0..1) that bumping into a window edge starts a climb.
+    climb_chance: float = 0.75
+
     # Interaction
     interact_with_windows: bool = True
     follow_cursor: bool = False

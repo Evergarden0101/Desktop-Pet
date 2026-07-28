@@ -30,9 +30,16 @@ animal, a blob — any PNG) and it gets cut into parts and animated automaticall
 - 🐛 **Lots of actions:** idle, walk, run, **creep/crawl**, **climb**, sit
   (legs dangling), sleep, wave, cheer, chase the cursor, and get dragged &
   thrown with real momentum.
-- 🎨 **Bring any character.** Drop in a PNG and Desktop Pet extracts the body
-  parts for you (`auto_humanoid` heuristic, explicit `regions`, or optional
-  **MediaPipe pose** detection). No art? The built-in mascot is drawn
+- 🧠 **Modes.** Pick a personality from the tray: **Free spirit** (the default —
+  it wanders, seeks out windows to climb, naps when tired and generally does its
+  own thing), **Mischief**, **Calm**, or **Follow the cursor**.
+- 💬 **Talks — in English and Chinese.** Context-aware chatter while it walks,
+  climbs, sits, gets hungry or gets thrown (`你好呀~`, `爬上去看看!`, `nice day~`).
+  Characters can ship their own phrases.
+- 🎨 **Bring any character — right in the app.** Open **Characters**, pick a
+  picture, and it's cut into body parts and registered for you. A built-in
+  **character manager** lets you preview, switch, rename, duplicate and delete.
+  (CLI and hand-written packs still work.) No art? The built-in mascot is drawn
   procedurally from shapes and works instantly.
 - 🛠️ **Highly customizable.** Size, opacity, frame rate, gravity, per-action
   speeds, which behaviours are allowed, autonomy pacing, number of pets, window
@@ -93,19 +100,30 @@ Open **Settings** from the menu, or edit the JSON directly at
 
 | Setting | Meaning |
 | --- | --- |
+| `mode` | `free` (default), `mischief`, `calm` or `follow` |
 | `scale`, `opacity`, `fps` | Size, transparency, smoothness |
 | `gravity_enabled` | Turn gravity/throwing on or off |
 | `walk/run/climb/creep_speed` | Per-action movement speeds |
 | `interact_with_windows` | Walk on / climb application windows |
-| `follow_cursor` | Pet chases your mouse |
+| `climb_chance` | How eagerly it climbs an edge it bumps into (0–1) |
 | `enabled_behaviors` | Which actions the autonomy brain may choose |
 | `pet_count` | How many pets to spawn |
 | `autonomy_min/max` | How restless the pet is (seconds between actions) |
+| `show_speech_bubbles` | Bilingual chatter on/off |
 | `start_on_login` | Launch automatically at login |
 
 ### Bring your own character
 
-Any image works. Cut it into body parts and register it as a character:
+**In the app (easiest).** Right-click the pet (or the tray icon) →
+**Character → Add from a picture…**, or open **Settings → Manage characters**.
+Choose any PNG/JPG, give it a name, press **Add character** — Desktop Pet cuts
+it into body parts, registers it, and offers to switch to it immediately.
+
+The same window is the **character manager**: preview each character, switch
+with a double-click, and rename / duplicate / delete your own packs. Built-in
+characters are protected — duplicate one to make it editable.
+
+**From the command line**, if you prefer:
 
 ```bash
 # Make a character named "Hero" from hero.png (transparent PNG works best)

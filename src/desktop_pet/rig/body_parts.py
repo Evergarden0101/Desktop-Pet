@@ -90,28 +90,36 @@ class BoneSpec:
 #   * thighs get local ~pi so they end up pointing down (world ~+pi/2).
 #   * feet get local ~-1.4 so they point forward (world ~0).
 # Lengths are "rig units" multiplied by the character scale at runtime.
+#
+# Proportions follow a stylised ~6.5-head figure (a slightly cute but still
+# believably human build; a strict anatomical figure is 7.5-8 heads, which
+# reads as gangly at desktop-pet sizes). With head length 26:
+#   total height ~= hips 4 + torso 52 + head 26 + neck gap  ~= 6.4 heads
+#   leg (thigh 44 + shin 40 + ankle) ~= 47% of height, as in a real figure
+#   arm (upper 32 + fore 28 + hand 10) reaches mid-thigh when hanging
 DEFAULT_HUMANOID: List[BoneSpec] = [
     BoneSpec("hips", None, 4.0, -1.5708, "hips", z_order=5),          # points up
-    BoneSpec("torso", "hips", 44.0, 0.0, "torso", z_order=6),
-    BoneSpec("head", "torso", 32.0, 0.0, "head", z_order=10),
+    BoneSpec("torso", "hips", 52.0, 0.0, "torso", z_order=6),
+    BoneSpec("head", "torso", 26.0, 0.0, "head", z_order=10),
 
-    # Arms hang down and splay slightly outward from the shoulders (torso tip).
-    BoneSpec("upper_arm_l", "torso", 30.0, 3.39, "upper_arm_l", z_order=4),
-    BoneSpec("forearm_l", "upper_arm_l", 26.0, 0.15, "forearm_l", z_order=3),
-    BoneSpec("hand_l", "forearm_l", 12.0, 0.0, "hand_l", z_order=3),
+    # Arms hang down close to the body, splaying only slightly outward.
+    BoneSpec("upper_arm_l", "torso", 32.0, 3.32, "upper_arm_l", z_order=4),
+    BoneSpec("forearm_l", "upper_arm_l", 28.0, 0.12, "forearm_l", z_order=3),
+    BoneSpec("hand_l", "forearm_l", 10.0, 0.0, "hand_l", z_order=3),
 
-    BoneSpec("upper_arm_r", "torso", 30.0, 2.89, "upper_arm_r", z_order=8),
-    BoneSpec("forearm_r", "upper_arm_r", 26.0, 0.15, "forearm_r", z_order=9),
-    BoneSpec("hand_r", "forearm_r", 12.0, 0.0, "hand_r", z_order=9),
+    BoneSpec("upper_arm_r", "torso", 32.0, 2.96, "upper_arm_r", z_order=8),
+    BoneSpec("forearm_r", "upper_arm_r", 28.0, 0.12, "forearm_r", z_order=9),
+    BoneSpec("hand_r", "forearm_r", 10.0, 0.0, "hand_r", z_order=9),
 
-    # Legs descend from the pelvis (hips tip); feet point forward.
-    BoneSpec("thigh_l", "hips", 40.0, 3.22, "thigh_l", z_order=4),
-    BoneSpec("shin_l", "thigh_l", 38.0, 0.05, "shin_l", z_order=3),
-    BoneSpec("foot_l", "shin_l", 14.0, -1.40, "foot_l", z_order=3),
+    # Legs descend from the pelvis (hips tip), nearly vertical; feet point
+    # forward. A small outward splay keeps them from overlapping exactly.
+    BoneSpec("thigh_l", "hips", 44.0, 3.20, "thigh_l", z_order=4),
+    BoneSpec("shin_l", "thigh_l", 40.0, 0.04, "shin_l", z_order=3),
+    BoneSpec("foot_l", "shin_l", 13.0, -1.42, "foot_l", z_order=3),
 
-    BoneSpec("thigh_r", "hips", 40.0, 3.06, "thigh_r", z_order=7),
-    BoneSpec("shin_r", "thigh_r", 38.0, 0.05, "shin_r", z_order=6),
-    BoneSpec("foot_r", "shin_r", 14.0, -1.40, "foot_r", z_order=6),
+    BoneSpec("thigh_r", "hips", 44.0, 3.08, "thigh_r", z_order=7),
+    BoneSpec("shin_r", "thigh_r", 40.0, 0.04, "shin_r", z_order=6),
+    BoneSpec("foot_r", "shin_r", 13.0, -1.42, "foot_r", z_order=6),
 ]
 
 

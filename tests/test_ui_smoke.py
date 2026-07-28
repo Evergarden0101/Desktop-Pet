@@ -189,6 +189,85 @@ def test_summon_recovers_offscreen_pet(qapp):
         app.shutdown()
 
 
+def test_character_dialog_lists_and_imports(qapp, tmp_path, monkeypatch):
+    """The in-app manager should list packs and import a picked picture."""
+    PIL = pytest.importorskip("PIL")
+    from PIL import Image, ImageDraw
+
+    import desktop_pet.characters as characters_mod
+    import desktop_pet.config as config_mod
+
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    monkeypatch.setattr(characters_mod, "user_characters_dir", lambda: str(user_dir))
+    monkeypatch.setattr(config_mod, "user_characters_dir", lambda: str(user_dir))
+
+    src = tmp_path / "buddy.png"
+    img = Image.new("RGBA", (140, 300), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse([48, 10, 92, 58], fill=(255, 220, 180, 255))
+    d.rectangle([50, 58, 90, 180], fill=(80, 120, 220, 255))
+    d.rectangle([52, 180, 68, 292], fill=(40, 40, 80, 255))
+    d.rectangle([72, 180, 88, 292], fill=(40, 40, 80, 255))
+    img.save(src)
+
+    app = _make_app(qapp)
+    try:
+        from desktop_pet.ui.character_dialog import CharacterDialog
+
+        dialog = CharacterDialog(app)
+        assert dialog.list_widget.count() >= 1  # at least the built-in
+
+        # Simulate picking a file and pressing "Add character" (auto-confirm).
+        from PySide6.QtWidgets import QMessageBox
+
+        monkeypatch.setattr(
+            QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.No)
+        )
+        dialog._pending_image = str(src)
+        dialog.name_edit.setText("Buddy")
+        dialog._do_import()
+
+        names = {c.name for c in characters_mod.list_characters()}
+        assert "Buddy" in names
+        assert dialog.list_widget.count() >= 2
+    finally:
+        app.shutdown()
+
+
+def test_set_mode_updates_config_and_menu(qapp):
+    app = _make_app(qapp)
+    try:
+        from desktop_pet.behaviors.autonomy import MODE_WEIGHTS
+        from desktop_pet.ui.menu import build_pet_menu
+
+        for mode in MODE_WEIGHTS:
+            app.set_mode(mode)
+            assert app.config.mode == mode
+            assert app.config.follow_cursor == (mode == "follow")
+            menu = build_pet_menu(app, app.pets[0])
+            assert menu.actions()
+        _run_frames(app, 10)
+    finally:
+        app.shutdown()
+
+
+def test_scale_change_keeps_pet_on_screen(qapp):
+    """Resizing through the controller must not drop the pet off the bottom."""
+    app = _make_app(qapp)
+    try:
+        _run_frames(app, 10)
+        pet = app.pets[0]
+        floor = pet.env.world_floor()
+        for scale in (2.0, 3.0, 0.6, 1.0):
+            app.set_scale(scale)
+            _run_frames(app, 20)
+            assert pet.feet_y() <= floor + 2, f"pet sank at scale {scale}"
+            assert pet.position.y < floor
+    finally:
+        app.shutdown()
+
+
 def test_tick_survives_backend_failures(qapp):
     """A flaky Win32 snapshot must not blank the app: last good one is reused."""
     from desktop_pet.platform.null import NullBackend
