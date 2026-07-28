@@ -166,6 +166,10 @@ Architecture, invariants and extension points are documented in
 
 ## 🩹 Troubleshooting
 
+- **Nothing appears after launch.** Fixed in v1.0.1 for displays using Windows
+  scaling (125 %/150 %…) — update if you're on 1.0.0. If pets ever get lost
+  (monitor unplugged, resolution changed), **double-click the tray icon** or
+  choose **Summon pets** from its menu to drop them back onto the main screen.
 - **The pet ignores my windows.** Enable *“Walk on and climb application
   windows”* in Settings (`interact_with_windows`). Some windows (elevated/admin
   apps) can't be introspected without matching privileges.

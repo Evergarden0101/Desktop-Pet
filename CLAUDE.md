@@ -92,6 +92,14 @@ overlay.refresh()         # repaint + rebuild the click-through mask
 5. **Landing is swept** (`behaviors/fall.py`): test the whole
    `[prev_feet, new_feet]` span so a fast fall can't tunnel through a ledge.
 
+6. **Everything is physical pixels.** Win32 reports monitors/windows/cursor in
+   physical pixels, so `app.py::_configure_high_dpi` disables Qt's high-DPI
+   scaling *before* the QApplication exists — Qt geometry, painting and mouse
+   events then share the same unit. Do **not** re-enable Qt scaling or mix
+   logical coordinates in: on a 125%/150%-scaled display the pet gets drawn
+   below the visible screen and "disappears". (Debug escape hatch:
+   `DESKTOP_PET_QT_SCALING=1`.)
+
 ## Running, testing, building
 
 ```bash

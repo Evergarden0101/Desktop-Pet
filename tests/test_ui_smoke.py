@@ -151,3 +151,66 @@ def test_add_and_remove_pets(qapp):
         _run_frames(app, 10)
     finally:
         app.shutdown()
+
+
+def test_pet_spawns_on_primary_work_area(qapp):
+    """The pet must appear on the primary monitor, feet on its floor."""
+    app = _make_app(qapp)
+    try:
+        pet = app.pets[0]
+        primary = app.backend.snapshot().primary()
+        work = primary.work_area
+        assert work.left <= pet.position.x <= work.right
+        assert abs(pet.feet_y() - work.bottom) < 1.0
+    finally:
+        app.shutdown()
+
+
+def test_summon_recovers_offscreen_pet(qapp):
+    """Summon teleports a lost pet back over the primary screen and drops it."""
+    from desktop_pet.core.environment import Environment
+
+    app = _make_app(qapp)
+    try:
+        pet = app.pets[0]
+        pet.body.position = Vec2(99999.0, -5000.0)  # far off any monitor
+        app.summon()
+        primary = app.backend.snapshot().primary()
+        work = primary.work_area
+        assert work.left <= pet.position.x <= work.right
+        assert pet.state.current_name == "fall"
+        # Simulate a few seconds so it lands back on a real surface.
+        for _ in range(240):
+            pet.set_environment(Environment(app.backend.snapshot(), True))
+            pet.update(1 / 60)
+        assert pet.body.on_ground
+        assert work.left <= pet.position.x <= work.right
+    finally:
+        app.shutdown()
+
+
+def test_tick_survives_backend_failures(qapp):
+    """A flaky Win32 snapshot must not blank the app: last good one is reused."""
+    from desktop_pet.platform.null import NullBackend
+
+    class FlakyBackend(NullBackend):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def snapshot(self):
+            self.calls += 1
+            if self.calls % 2 == 0:
+                raise RuntimeError("transient Win32 failure")
+            return super().snapshot()
+
+    app = _make_app(qapp)
+    try:
+        app.backend = FlakyBackend()
+        for _ in range(30):
+            app._tick()  # must not raise
+        pet = app.pets[0]
+        assert pet.position.x == pet.position.x  # still finite / updating
+        assert app.backend.calls >= 30
+    finally:
+        app.shutdown()

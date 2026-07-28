@@ -8,9 +8,30 @@ without a display server.
 
 from __future__ import annotations
 
+import os
 import sys
 
 from .config import AppConfig
+
+
+def _configure_high_dpi() -> None:
+    """Keep Qt's coordinate system in *physical* pixels, matching Win32.
+
+    The desktop snapshot (window rects, taskbar, monitors, cursor) comes from
+    the Win32 API in physical pixels. Qt 6 normally applies per-monitor DPI
+    scaling, which makes widget geometry/painting *logical* - so on a display
+    scaled above 100% (the Windows default on most laptops) everything the pet
+    is anchored to shifts: the floor at physical y=1032 is drawn at logical
+    y=1032 = 1290+ physical, i.e. below the visible screen, and the pet never
+    appears. Disabling Qt's scaling makes both worlds share one unit.
+
+    Must run before the QApplication is created. Set DESKTOP_PET_QT_SCALING=1
+    to keep Qt's scaling (escape hatch for debugging).
+    """
+    if os.environ.get("DESKTOP_PET_QT_SCALING") == "1":
+        return
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+    os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
 
 
 def _require_pyside() -> None:
@@ -26,6 +47,7 @@ def _require_pyside() -> None:
 
 def run(config: AppConfig | None = None) -> int:
     """Launch the desktop pet. Returns the Qt exit code."""
+    _configure_high_dpi()
     _require_pyside()
 
     from PySide6.QtWidgets import QApplication

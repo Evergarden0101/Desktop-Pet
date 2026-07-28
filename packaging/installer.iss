@@ -3,7 +3,7 @@
 ; Produces:    dist\DesktopPet-Setup.exe
 
 #define AppName "Desktop Pet"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 #define AppPublisher "Desktop Pet contributors"
 #define AppExeName "DesktopPet.exe"
 #define AppURL "https://github.com/evergarden0101/desktop-pet"

@@ -85,6 +85,10 @@ def build_pet_menu(app: "PetApp", pet: Optional["Pet"] = None) -> QMenu:
 
     menu.addSeparator()
 
+    summon = menu.addAction("Summon pets")
+    summon.setToolTip("Bring every pet to the middle of the main screen")
+    summon.triggered.connect(lambda _checked=False: app.summon())
+
     add = menu.addAction("Add another pet")
     add.triggered.connect(lambda: app.add_pet())
     if pet is not None:

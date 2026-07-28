@@ -23,9 +23,10 @@ class PetTray(QSystemTrayIcon):
         self.activated.connect(self._on_activated)
 
     def _on_activated(self, reason) -> None:
-        # Double-clicking the tray icon summons a pet to the cursor.
+        # Double-clicking the tray icon summons the pets to the main screen -
+        # the quickest recovery if they've wandered somewhere invisible.
         if reason == QSystemTrayIcon.DoubleClick and self.app.pets:
-            self.app.trigger_all("wave")
+            self.app.summon()
 
     def rebuild_menu(self) -> None:
         self._menu = build_pet_menu(self.app, pet=None)

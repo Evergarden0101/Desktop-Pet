@@ -8,7 +8,9 @@ dialog call into.
 
 from __future__ import annotations
 
+import sys
 import time
+import traceback
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QTimer
@@ -53,12 +55,15 @@ class PetApp:
         self.tray = None  # set up in start()
 
         self._loaded_cache: Dict[str, LoadedCharacter] = {}
+        self._last_snapshot = None
+        self._tick_error_logged = False
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
         bounds = self.backend.snapshot().virtual_bounds()
         self.overlay.set_geometry_from_bounds(bounds)
         self.overlay.show()
+        self.overlay.raise_()
 
         # Exclude our own overlay from Windows window enumeration.
         if hasattr(self.backend, "own_hwnd"):
@@ -113,8 +118,16 @@ class PetApp:
 
         env = Environment(self.backend.snapshot(), self.config.interact_with_windows)
         pet.set_environment(env)
-        floor = env.world_floor()
-        start_x = env.bounds.center.x + (pet_id * 60)
+        # Spawn on the primary monitor's floor: the centre of the whole virtual
+        # desktop can land on a secondary (or switched-off) monitor.
+        primary = env.snapshot.primary()
+        if primary is not None:
+            work = primary.work_area
+            start_x = min(max(work.center.x + pet_id * 60, work.left + 40), work.right - 40)
+            floor = work.bottom
+        else:
+            start_x = env.bounds.center.x + pet_id * 60
+            floor = env.world_floor()
         pet.body.position = Vec2(start_x, floor - pet.stand_offset)
         pet.state.change("idle")
         pet.say("hi!", 2.0)
@@ -177,6 +190,28 @@ class PetApp:
         pet.say("yum!", 2.0)
         self.trigger(pet, "cheer")
 
+    def summon(self) -> None:
+        """Teleport every pet above the primary monitor's centre and drop it.
+
+        A recovery action for when pets end up off any visible screen (monitor
+        unplugged, resolution/scale changed, window dragged away mid-ride).
+        """
+        snapshot = self._safe_snapshot()
+        if snapshot is None:
+            return
+        primary = snapshot.primary()
+        if primary is None:
+            return
+        work = primary.work_area
+        for i, pet in enumerate(self.pets):
+            x = work.center.x + (i - (len(self.pets) - 1) / 2) * 70
+            x = min(max(x, work.left + 40), work.right - 40)
+            pet.body.position = Vec2(x, work.top + work.height * 0.3)
+            pet.body.stop()
+            pet.state.change("fall", force=True)
+            pet.say("here!", 2.0)
+        self.overlay.raise_()
+
     def toggle_follow_cursor(self, enabled: bool) -> None:
         self.config.follow_cursor = enabled
         self.config.save()
@@ -211,6 +246,24 @@ class PetApp:
         return list(discover_characters().keys()) or ["default"]
 
     # --------------------------------------------------------------- loop
+    def _safe_snapshot(self):
+        """Take a desktop snapshot, falling back to the last good one.
+
+        A transient Win32 failure (session lock, monitor hot-plug, an
+        uncooperative window mid-enumeration) must not blank the app: raising
+        out of the timer callback every frame would mean the pet never updates
+        or repaints again.
+        """
+        try:
+            snapshot = self.backend.snapshot()
+            self._last_snapshot = snapshot
+            return snapshot
+        except Exception:
+            if not self._tick_error_logged:
+                traceback.print_exc(file=sys.stderr)
+                self._tick_error_logged = True
+            return self._last_snapshot
+
     def _tick(self) -> None:
         now = time.monotonic()
         dt = now - self._last_time
@@ -218,7 +271,9 @@ class PetApp:
         # Clamp dt so a stalled frame (e.g. laptop wake) doesn't fling the pet.
         dt = min(dt, 1 / 20)
 
-        snapshot = self.backend.snapshot()
+        snapshot = self._safe_snapshot()
+        if snapshot is None:
+            return  # nothing to work with yet; try again next frame
 
         # Keep the overlay covering the (possibly changed) virtual desktop.
         bounds = snapshot.virtual_bounds()
@@ -229,14 +284,20 @@ class PetApp:
             self.overlay.set_geometry_from_bounds(bounds)
 
         for pet in self.pets:
-            env = Environment(snapshot, self.config.interact_with_windows)
-            pet.set_environment(env)
-            # In follow-cursor mode an idle pet immediately goes to chase.
-            if self.config.follow_cursor and pet.state.current_name == "idle":
-                self.trigger(pet, "chase_cursor")
-            else:
-                self.autonomy[pet.pet_id].update(dt)
-            pet.update(dt)
+            try:
+                env = Environment(snapshot, self.config.interact_with_windows)
+                pet.set_environment(env)
+                # In follow-cursor mode an idle pet immediately goes to chase.
+                if self.config.follow_cursor and pet.state.current_name == "idle":
+                    self.trigger(pet, "chase_cursor")
+                else:
+                    self.autonomy[pet.pet_id].update(dt)
+                pet.update(dt)
+            except Exception:
+                # One misbehaving pet/behaviour must not take the app down.
+                if not self._tick_error_logged:
+                    traceback.print_exc(file=sys.stderr)
+                    self._tick_error_logged = True
 
         self.overlay.refresh()
 
