@@ -1,0 +1,36 @@
+{
+  "name": "Pip",
+  "author": "Desktop Pet",
+  "version": "1.0",
+  "scale": 1.0,
+  "render": {
+    "mode": "shapes",
+    "outline": "#2b2b3a",
+    "outline_width": 3.0,
+    "palette": {
+      "head": "#ffd9a0",
+      "torso": "#4f8cff",
+      "hips": "#3a6fd8",
+      "upper_arm_l": "#ffd9a0",
+      "forearm_l": "#ffd9a0",
+      "hand_l": "#ffcf90",
+      "upper_arm_r": "#ffd9a0",
+      "forearm_r": "#ffd9a0",
+      "hand_r": "#ffcf90",
+      "thigh_l": "#2f3550",
+      "shin_l": "#2f3550",
+      "foot_l": "#1f2233",
+      "thigh_r": "#2f3550",
+      "shin_r": "#2f3550",
+      "foot_r": "#1f2233"
+    },
+    "face": {
+      "eye_color": "#2b2b3a",
+      "cheek_color": "#ff9e9e"
+    }
+  },
+  "extraction": { "method": "auto_humanoid" },
+  "skeleton": [],
+  "poses": {},
+  "behaviors": {}
+}

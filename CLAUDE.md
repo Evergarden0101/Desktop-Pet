@@ -1,0 +1,141 @@
+# CLAUDE.md
+
+Guidance for Claude (and humans) working in this repository. Read this before
+making changes — it explains the architecture, the invariants that keep the
+simulation correct, and how to run/test/build.
+
+## What this is
+
+Desktop Pet is a highly interactive, customizable desktop companion for Windows.
+A character (human or anything else) is decomposed into **body sections** that
+are rigged to a 2D skeleton, so the pet can perform articulated actions —
+walking, running, **climbing** window edges, **creeping**/crawling, sitting,
+sleeping, being dragged and thrown — and it **interacts with real application
+windows** (standing on title bars, climbing window sides, sitting on the
+taskbar).
+
+The app is written in Python with a **PySide6** overlay for rendering, **Pillow**
+for body-part extraction, and the **Win32 API via ctypes** for desktop
+introspection. It ships as a standalone `DesktopPet.exe` (built with
+PyInstaller) and an Inno Setup installer.
+
+## Architecture (layered, GUI-free core)
+
+The package is deliberately layered so the entire simulation can run and be
+tested **without a display**. Only the `ui` layer imports PySide6.
+
+```
+src/desktop_pet/
+├── config.py            AppConfig (user settings) + CharacterPack (a character)
+├── cli.py / __main__.py Command line: run | list | extract | new
+├── app.py               Bootstraps QApplication and PetApp
+├── core/                ← pure logic, no Qt / no Win32
+│   ├── geometry.py      Vec2, Rect, clamp/lerp/lerp_angle/smoothstep
+│   ├── skeleton.py      Bone hierarchy, forward kinematics, two-bone IK
+│   ├── physics.py       PhysicsBody (gravity/throw) + VelocityTracker
+│   ├── environment.py   DesktopSnapshot -> walkable Surfaces + climbable Walls
+│   ├── state_machine.py Behaviour state machine
+│   ├── events.py        Tiny pub/sub bus
+│   └── pet.py           Pet entity: skeleton + physics + stats + state machine
+├── rig/
+│   ├── body_parts.py    BodyPart, the default humanoid BoneSpec rig
+│   ├── extractor.py     Cut a character image into parts (regions/auto/pose)
+│   ├── poses.py         PoseLibrary: procedural poses (walk, climb, creep, ...)
+│   ├── skeleton_utils.py  Derived measurements (foot-plant offset, span)
+│   └── loader.py        CharacterPack -> skeleton + extracted parts
+├── behaviors/           ← the pet's actions (states); no Qt
+│   ├── base.py, locomotion.py   Behaviour + GroundedBehavior helpers
+│   ├── idle/walk/creep/climb/sit/fall/drag/interact.py
+│   └── autonomy.py      The "brain" that picks the next action
+├── platform/
+│   ├── base.py          PlatformBackend interface + get_backend()
+│   ├── windows.py       Win32/ctypes backend (enumerate windows/monitors)
+│   ├── null.py          Synthetic desktop for dev/CI/tests
+│   └── autostart.py     Start-on-login via winreg (Windows)
+└── ui/                  ← PySide6 ONLY here
+    ├── controller.py    PetApp: owns pets, the frame loop, the tray
+    ├── pet_window.py    Transparent click-through overlay (per-pixel mask)
+    ├── renderer.py      Draw the rig as shapes or as image parts
+    ├── menu.py / tray.py / settings_dialog.py / icon.py / imaging.py
+```
+
+### The frame loop (ui/controller.py `_tick`)
+
+```
+backend.snapshot()  ->  Environment(snapshot)  ->  for each pet:
+    autonomy.update(dt)   # maybe pick a new behaviour
+    pet.update(dt)        # behaviour drives physics + pose; solve FK
+overlay.refresh()         # repaint + rebuild the click-through mask
+```
+
+## Invariants — do not break these
+
+1. **`core`, `rig`, `behaviors`, `platform` must not import PySide6.** The test
+   suite imports them headlessly. Keep Qt inside `ui/` (and Pillow imports lazy
+   where practical). `tests/test_ui_smoke.py` covers the Qt layer on the
+   `offscreen` platform.
+
+2. **The `Environment` is rebuilt every frame** (windows move!). Behaviours must
+   **not** cache a `Surface`/`Wall` across frames — re-resolve them each frame
+   (see `GroundedBehavior.resolve_support` and `ClimbBehavior._current_wall`).
+   This is *why* the pet rides dragged windows and falls when a ledge vanishes.
+
+3. **Foot planting.** `Pet.stand_offset` is the rest-pose distance from the
+   skeleton root (pelvis) to the feet. A pet on a surface at height `S` has
+   `root.y = S - ground_offset`. Poses that lie/sit lower the `ground_offset`
+   (idle behaviours restore it in `on_exit`).
+
+4. **Angle convention** (see `rig/body_parts.py`): screen space, `0` = +X
+   (right), `+pi/2` = down. `Bone.local_angle` is relative to the parent;
+   `Skeleton.facing` (±1) mirrors the rig for direction of travel.
+
+5. **Landing is swept** (`behaviors/fall.py`): test the whole
+   `[prev_feet, new_feet]` span so a fast fall can't tunnel through a ledge.
+
+## Running, testing, building
+
+```bash
+# Run from a source checkout (needs PySide6 + Pillow)
+python run.py                    # or: python -m desktop_pet
+python run.py --backend null     # force the synthetic desktop (no Win32)
+
+# Prepare a character from any image (headless, no PySide6 needed)
+python run.py extract art.png --name Hero
+python run.py list
+
+# Tests (headless; set offscreen so the Qt smoke tests run)
+QT_QPA_PLATFORM=offscreen pytest -q
+
+# Build the Windows executable + installer (on Windows)
+build.bat            # -> dist/DesktopPet.exe
+build.bat installer  # -> dist/DesktopPet-Setup.exe  (needs Inno Setup)
+```
+
+CI (`.github/workflows/build.yml`) runs the tests on Linux and builds/uploads
+`DesktopPet.exe` (+ installer) on a Windows runner; tags `v*` attach them to a
+GitHub Release.
+
+## Extending
+
+- **New behaviour:** subclass `Behavior` (or `GroundedBehavior`), give it a
+  `name`, implement `update(dt) -> Optional[next_state]`, register it in
+  `behaviors/__init__.py::DEFAULT_BEHAVIORS`, and (if autonomous) it becomes
+  selectable via `AppConfig.enabled_behaviors`.
+- **New pose:** add a method to `rig/poses.py::PoseLibrary` returning
+  `{bone_name: local_angle}` as small deltas from rest.
+- **New character:** drop a folder in the user characters dir with a
+  `character.json` (+ optional `texture.png`). See `docs/characters.md`.
+- **New platform backend:** implement `PlatformBackend.snapshot()` and wire it
+  into `platform/base.py::get_backend`.
+
+## Gotchas
+
+- The overlay uses a **per-frame input mask** built from each pet's
+  `bounding_rect()`, so clicks pass through everywhere except over a pet. If
+  clicks feel dead, check the mask/bounds math in `ui/pet_window.py`.
+- The default character (`Pip`) is **shapes** mode — it needs no art, which is
+  why the app works instantly. Image characters fall back to shapes if their
+  texture/parts are missing (see `rig/loader.py`).
+- Auto body-part extraction (`auto_humanoid`) is a **heuristic**; explicit
+  `regions` or the optional `pose` backend (MediaPipe) give cleaner cuts.
+```

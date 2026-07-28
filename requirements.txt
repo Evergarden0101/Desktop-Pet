@@ -1,0 +1,10 @@
+# Runtime dependencies for Desktop Pet.
+PySide6>=6.5
+Pillow>=9.0
+
+# --- Optional extras ---------------------------------------------------------
+# Automatic pose-based body-part extraction (heavier install):
+#   pip install mediapipe numpy
+#
+# Richer Windows integration / packaging is handled by the stdlib (ctypes,
+# winreg), so pywin32 is NOT required.

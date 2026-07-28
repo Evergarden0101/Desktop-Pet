@@ -142,6 +142,31 @@ class Pet:
     def half_width(self) -> float:
         return 0.28 * self.stand_offset
 
+    def bounding_rect(self, pad: float = 18.0):
+        """Axis-aligned bounds around the whole rig (virtual coords).
+
+        Used for hit-testing clicks and for the overlay's click-through mask.
+        """
+        from .geometry import Rect
+
+        pad *= self.config.scale
+        xs: List[float] = []
+        ys: List[float] = []
+        for name in self.skeleton.bones:
+            base = self.skeleton.bones[name].world_pos
+            tip = self.skeleton.tip_scaled_of(name)
+            xs.extend([base.x, tip.x])
+            ys.extend([base.y, tip.y])
+        if not xs:
+            p = self.body.position
+            return Rect(p.x - pad, p.y - pad, pad * 2, pad * 2)
+        return Rect.from_bounds(min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
+
+    def contains_point(self, x: float, y: float) -> bool:
+        from .geometry import Vec2 as _V
+
+        return self.bounding_rect().contains(_V(x, y))
+
     # ----------------------------------------------------------- behaviour
     def say(self, text: str, duration: float = 3.0) -> None:
         if self.config.show_speech_bubbles:

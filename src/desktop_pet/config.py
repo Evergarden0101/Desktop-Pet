@@ -165,8 +165,19 @@ class CharacterPack:
     skeleton: List[Dict[str, Any]] = field(default_factory=list)
     poses: Dict[str, Any] = field(default_factory=dict)
     behavior_overrides: Dict[str, Any] = field(default_factory=dict)
+    # ``render`` controls how the pet is drawn:
+    #   {"mode": "shapes", "palette": {...}}  -> procedural, no art needed
+    #   {"mode": "image"}                     -> use extracted part sprites
+    #   {"mode": "auto"}                      -> image if a texture exists, else shapes
+    render: Dict[str, Any] = field(default_factory=lambda: {"mode": "auto"})
     author: str = ""
     version: str = "1.0"
+
+    @property
+    def has_texture(self) -> bool:
+        import os as _os
+
+        return _os.path.exists(self.source_path)
 
     @property
     def source_path(self) -> str:
@@ -192,6 +203,7 @@ class CharacterPack:
             skeleton=data.get("skeleton", []),
             poses=data.get("poses", {}),
             behavior_overrides=data.get("behaviors", {}),
+            render=data.get("render", {"mode": "auto"}),
             author=data.get("author", ""),
             version=str(data.get("version", "1.0")),
         )
@@ -208,6 +220,7 @@ class CharacterPack:
             "skeleton": self.skeleton,
             "poses": self.poses,
             "behaviors": self.behavior_overrides,
+            "render": self.render,
         }
         os.makedirs(self.directory, exist_ok=True)
         with open(manifest, "w", encoding="utf-8") as fh:
