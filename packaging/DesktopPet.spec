@@ -29,7 +29,9 @@ datas = [
 hiddenimports = collect_submodules("desktop_pet")
 
 a = Analysis(
-    [os.path.join(SRC, "desktop_pet", "__main__.py")],
+    # Absolute-import entry point (NOT desktop_pet/__main__.py, whose relative
+    # import fails when PyInstaller runs it as the top-level __main__ script).
+    [os.path.join(ROOT, "packaging", "app_entry.py")],
     pathex=[SRC],
     binaries=[],
     datas=datas,
