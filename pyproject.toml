@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desktop-pet"
+version = "1.0.0"
+description = "A highly interactive, customizable desktop pet for Windows with skeletal body-part animation, window climbing, and creeping."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Desktop Pet contributors" }]
+keywords = ["desktop-pet", "windows", "overlay", "animation", "pyside6", "shimeji"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Desktop Environment",
+]
+
+dependencies = [
+    "PySide6>=6.5",
+    "Pillow>=9.0",
+]
+
+[project.optional-dependencies]
+# Optional pose-estimation backend for automatic body-part extraction.
+pose = ["mediapipe>=0.10", "numpy>=1.23"]
+# Start-on-login registration and richer Windows integration.
+windows = ["pywin32>=305"]
+dev = ["pytest>=7.0", "pyinstaller>=6.0"]
+
+[project.scripts]
+desktop-pet = "desktop_pet.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/evergarden0101/desktop-pet"
+Repository = "https://github.com/evergarden0101/desktop-pet"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"desktop_pet" = ["../assets/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,112 @@
+"""Climbing window sides and screen edges.
+
+The pet attaches to the nearest vertical :class:`~desktop_pet.core.environment.Wall`
+and ascends. Its hands are placed on the wall with two-bone IK so the climb
+reads as grabbing rather than sliding. Reaching a window's top edge, it mounts
+the title bar and stands there; losing the wall (window moved) drops it into a
+fall.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Optional
+
+from ..core.environment import Wall
+from ..core.geometry import Vec2
+from .base import Behavior
+
+
+class ClimbBehavior(Behavior):
+    name = "climb"
+    label = "Climb"
+
+    #: How close (px) the pet must be to a wall to grab it.
+    grab_radius = 46.0
+
+    def on_enter(self, wall: Optional[Wall] = None, direction: int = -1, **kwargs) -> None:
+        super().on_enter(**kwargs)
+        pet = self.pet
+        pet.set_ground_offset()
+        pet.body.on_ground = False
+        pet.body.stop()
+        self.direction = direction  # -1 = up (screen y decreases), +1 = down
+        self._wall = wall or self.env.nearest_wall(pet.body.position, self.grab_radius)
+        if self._wall is not None:
+            self._attach(self._wall)
+
+    def _attach(self, wall: Wall) -> None:
+        pet = self.pet
+        pet.body.position = Vec2(
+            wall.x + wall.facing * pet.half_width(), pet.body.position.y
+        )
+        pet.facing = -wall.facing  # face the wall
+
+    def _current_wall(self) -> Optional[Wall]:
+        """Re-resolve the wall we're climbing (walls are rebuilt each frame)."""
+        return self.env.nearest_wall(self.pet.body.position, self.grab_radius)
+
+    def update(self, dt: float) -> Optional[str]:
+        super().update(dt)
+        pet = self.pet
+        wall = self._current_wall()
+        if wall is None:
+            return "fall"
+
+        self._attach(wall)
+        pet.body.position = Vec2(
+            pet.body.position.x,
+            pet.body.position.y + self.config.climb_speed * self.direction * dt,
+        )
+        pet.anim_phase = (pet.anim_phase + dt * 1.2) % 1.0
+
+        # Mounting the top: the pet's body (root) has risen to the wall's top
+        # edge, so it can pull itself up and stand on the ledge. Using the root
+        # here (rather than the far-below feet) means the wall is still in range
+        # when the mount fires.
+        if self.direction < 0 and pet.body.position.y <= wall.top + 6:
+            surface = self._top_surface(wall)
+            if surface is not None:
+                pet.set_feet_on(surface)
+                return "idle"
+            return "fall"
+
+        # Reached the bottom of the wall - let go.
+        if self.direction > 0 and pet.body.position.y >= wall.y1 - pet.stand_offset:
+            return "fall"
+
+        pet.skeleton.blend(self.poses.climb(pet.anim_phase), min(1.0, dt * 8))
+        self._reach_hands(wall)
+        return None
+
+    def _top_surface(self, wall: Wall):
+        for surface in self.env.surfaces:
+            if abs(surface.y - wall.top) <= 6 and surface.contains_x(
+                self.pet.body.position.x, margin=6
+            ):
+                return surface
+        return None
+
+    def _reach_hands(self, wall: Wall) -> None:
+        """Place both hands on the wall via IK for a convincing grip."""
+        pet = self.pet
+        # Ensure the skeleton is anchored where the pet currently is so the IK
+        # targets resolve in world space (pet.update re-solves afterwards).
+        pet.skeleton.root_position = pet.body.position
+        pet.skeleton.facing = pet.facing
+        pet.skeleton.scale = pet.config.scale
+        pet.skeleton.solve()
+
+        reach = 0.5 - 0.5 * math.cos(pet.anim_phase * math.tau)
+        high = pet.body.position.y - pet.stand_offset * (0.55 + 0.2 * reach)
+        low = pet.body.position.y - pet.stand_offset * (0.35 - 0.2 * reach)
+        wall_x = wall.x
+        try:
+            pet.skeleton.solve_two_bone_ik(
+                "upper_arm_r", "forearm_r", Vec2(wall_x, high), bend_positive=True
+            )
+            pet.skeleton.solve_two_bone_ik(
+                "upper_arm_l", "forearm_l", Vec2(wall_x, low), bend_positive=False
+            )
+        except KeyError:
+            pass  # custom rigs may lack these bones; the pose alone still works

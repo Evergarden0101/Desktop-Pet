@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# PyInstaller
+*.spec.bak
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Generated character part caches (kept out of VCS; regenerated on demand)
+assets/characters/*/parts/
+
+# App runtime config
+config.json
