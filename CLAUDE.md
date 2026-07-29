@@ -62,6 +62,7 @@ src/desktop_pet/
     ├── pet_window.py    Transparent click-through overlay (per-pixel mask)
     ├── renderer.py      Draw the rig as shapes or as image parts
     ├── character_dialog.py  Character manager + "add from a picture" importer
+    ├── errors.py         Crash log + @guard for widget callbacks
     ├── menu.py / tray.py / settings_dialog.py / icon.py / imaging.py
 ```
 
@@ -156,6 +157,23 @@ overlay.refresh()         # repaint + rebuild the click-through mask
    image's alpha channel and hands the masked image to everything downstream —
    so the image `extract_regions` cuts from must be the one `_prepare`
    returned, not the caller's original.
+
+13. **MediaPipe can kill the process, so bracket every call into it.**
+   It is C++: an unhappy graph, an unreadable asset or a missing op calls
+   `abort()`, which no `try`/`except` here can catch. `rig/detect.py` writes a
+   marker file around each native call (`_guarded`) and, if it finds one left
+   over at startup, drops a level — full → landmarks-only → off — so a picture
+   that crashes the app once cannot crash it again. Any new native call must go
+   inside `_guarded`, and anything that reads a model must go through
+   `_base_options` (bytes, not a path: MediaPipe's Windows file API can't open
+   a non-ASCII `%APPDATA%`).
+
+14. **A windowed build has no stdout or stderr.** PyInstaller gives a GUI exe
+   `sys.stdout is None` and closed descriptors 1/2, so tracebacks *and* native
+   output vanish — which is what made the crash above invisible.
+   `ui/errors.py::capture_output` redirects both the Python objects and the
+   descriptors to `session.log` before anything else runs. Widget callbacks
+   wear `@guard` so a failure becomes a message box instead of a dead button.
 
 ## Running, testing, building
 

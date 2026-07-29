@@ -50,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--download", action="store_true",
         help="Fetch the pose model now if it isn't cached yet.",
     )
+    doctor_p.add_argument(
+        "--reset-detector", action="store_true",
+        help="Re-enable the full pose detector after it was turned down.",
+    )
 
     extract_p = sub.add_parser("extract", help="Extract body parts from an image into a pack.")
     extract_p.add_argument("image", help="Path to the character image (PNG with transparency ideal).")
@@ -102,9 +106,27 @@ def _render_block(result) -> dict:
     return {"mode": "image"}
 
 
-def cmd_doctor(download: bool = False) -> int:
+def _log_paths():
+    """Existing log files worth pointing a bug report at."""
+    from .config import config_dir
+
+    found = []
+    for label, name in (("error log", "errors.log"), ("session log", "session.log")):
+        path = os.path.join(config_dir(), name)
+        if os.path.exists(path):
+            found.append((label, path))
+    return found
+
+
+def cmd_doctor(download: bool = False, reset_detector: bool = False) -> int:
     """Print a short health report - handy for diagnosing a frozen build."""
     import platform
+
+    from .rig import detect
+
+    if reset_detector:
+        detect.reset_stage()
+        print("Pose detector reset: the next import will try full quality again.\n")
 
     print(f"desktop-pet {__version__}")
     print(f"  python      {platform.python_version()} on {platform.system()}")
@@ -128,8 +150,6 @@ def cmd_doctor(download: bool = False) -> int:
     if have_lib:
         print("  mediapipe   ok")
 
-    from .rig import detect
-
     cached = detect.model_available()
     print(f"  pose model  {'cached' if cached else 'not downloaded'} -> {detect.model_path()}")
     if download and not cached:
@@ -137,10 +157,28 @@ def cmd_doctor(download: bool = False) -> int:
         cached = detect.ensure_model() is not None
         print(f"  pose model  {'downloaded' if cached else 'DOWNLOAD FAILED'}")
 
+    stage = detect.stage()
+    print(f"  detector    {stage} - {detect.STAGE_LABELS.get(stage, stage)}")
+    reason = detect.stage_reason()
+    if reason:
+        print(f"              ({reason})")
+
+    for label, path in _log_paths():
+        print(f"  {label:11s} {path}")
+
     usable = detect.available(download=False)
     print()
-    if usable:
+    if stage != detect.STAGE_FULL and reason:
+        print("The pose detector was turned down after a failed import. To try")
+        print("full quality again:")
+        print("    desktop-pet doctor --reset-detector")
+        print()
+    if usable and stage == detect.STAGE_FULL:
         print("Photo import: using the pose detector (best quality).")
+    elif usable:
+        print(f"Photo import: {detect.STAGE_LABELS.get(stage, stage)}.")
+    elif stage == detect.STAGE_OFF:
+        print("Photo import: silhouette only (the pose detector is switched off).")
     elif have_lib:
         print("Photo import: silhouette only - the pose model isn't cached yet.")
         print("              It downloads automatically on first import, or run:")
@@ -212,7 +250,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_list()
 
     if command == "doctor":
-        return cmd_doctor(download=getattr(args, "download", False))
+        return cmd_doctor(
+            download=getattr(args, "download", False),
+            reset_detector=getattr(args, "reset_detector", False),
+        )
 
     if command == "extract":
         return cmd_extract(args.image, args.name, args.method, args.scale, args.out)

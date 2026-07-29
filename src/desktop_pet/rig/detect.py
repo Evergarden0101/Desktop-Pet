@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
@@ -147,6 +148,8 @@ def ensure_model(download: bool = True, timeout: float = 30.0) -> Optional[str]:
 
 def available(download: bool = False) -> bool:
     """Whether pose detection can run right now (library + model present)."""
+    if stage() == STAGE_OFF:
+        return False
     try:
         import mediapipe  # noqa: F401
     except Exception:
@@ -154,9 +157,161 @@ def available(download: bool = False) -> bool:
     return ensure_model(download=download) is not None
 
 
+# ------------------------------------------------------- crash-safe staging
+#
+# MediaPipe is a native library. When it is unhappy - a graph it can't build, a
+# model asset it can't read, an op missing from a frozen bundle - it does not
+# raise: its C++ CHECK macros call abort(), which takes the whole application
+# with them. No try/except in this file can catch that, so the only way to stop
+# a bad import from killing the app *again* is to notice that it happened and
+# ask for less next time.
+#
+# Each level below is one step less native work than the last.
+STAGE_FULL = "full"            # landmarks + person segmentation
+STAGE_LANDMARKS = "landmarks"  # landmarks only, no segmentation mask
+STAGE_OFF = "off"              # don't load the model at all
+_STAGES = (STAGE_FULL, STAGE_LANDMARKS, STAGE_OFF)
+
+STAGE_LABELS = {
+    STAGE_FULL: "person detection with background removal",
+    STAGE_LANDMARKS: "person detection (no background removal)",
+    STAGE_OFF: "disabled - silhouette analysis only",
+}
+
+_ENV_OVERRIDE = "DESKTOP_PET_DETECTOR"
+_stage: Optional[str] = None
+_stage_reason = ""
+
+
+def _state_path() -> str:
+    return os.path.join(model_dir(), "detector.json")
+
+
+def _marker_path() -> str:
+    """Exists only while a native call is in flight; survives an abort."""
+    return os.path.join(model_dir(), "detector.running")
+
+
+def _read_state() -> dict:
+    try:
+        import json
+
+        with open(_state_path(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_state(value: str, reason: str) -> None:
+    try:
+        import json
+
+        with open(_state_path(), "w", encoding="utf-8") as fh:
+            json.dump({"stage": value, "reason": reason}, fh)
+    except Exception:
+        pass
+
+
+def stage() -> str:
+    """The detector level to use, demoting once if the last run never finished.
+
+    A leftover marker file means the previous attempt entered native code and
+    never came back - the process died inside MediaPipe. Rather than repeat it,
+    drop to the next level down and record why.
+    """
+    global _stage, _stage_reason
+    if _stage is not None:
+        return _stage
+
+    override = os.environ.get(_ENV_OVERRIDE, "").strip().lower()
+    if override in _STAGES:
+        _stage, _stage_reason = override, f"{_ENV_OVERRIDE} is set"
+        return _stage
+
+    state = _read_state()
+    value = state.get("stage")
+    _stage = value if value in _STAGES else STAGE_FULL
+    _stage_reason = str(state.get("reason", ""))
+
+    try:
+        crashed = os.path.exists(_marker_path())
+    except Exception:
+        crashed = False
+    if crashed:
+        index = _STAGES.index(_stage)
+        _stage = _STAGES[min(index + 1, len(_STAGES) - 1)]
+        _stage_reason = "the previous import stopped inside the pose model"
+        _write_state(_stage, _stage_reason)
+        _clear_marker()
+    return _stage
+
+
+def stage_reason() -> str:
+    stage()
+    return _stage_reason
+
+
+def reset_stage() -> None:
+    """Forget a demotion and try the full detector again."""
+    global _stage, _stage_reason
+    _stage, _stage_reason = None, ""
+    _clear_marker()
+    try:
+        os.remove(_state_path())
+    except Exception:
+        pass
+    reset()
+
+
+def _set_marker(step: str) -> None:
+    try:
+        with open(_marker_path(), "w", encoding="utf-8") as fh:
+            fh.write(step)
+    except Exception:
+        pass
+
+
+def _clear_marker() -> None:
+    try:
+        os.remove(_marker_path())
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+
+@contextmanager
+def _guarded(step: str):
+    """Leave a breadcrumb across a native call so an abort is detectable."""
+    _set_marker(step)
+    try:
+        yield
+    finally:
+        _clear_marker()
+
+
 # ------------------------------------------------------------------ detector
 _detector = None
 _detector_error = False
+
+
+def _base_options(BaseOptions, path: str):
+    """Model asset for the landmarker, as *bytes* where that's supported.
+
+    Handing MediaPipe a path makes its C++ side open the file, and on Windows
+    that goes through a narrow (ANSI) API - so a user whose account name isn't
+    ASCII has a ``%APPDATA%`` path the library simply cannot read. Python opens
+    it correctly, so read the bytes here and pass those instead.
+    """
+    try:
+        with open(path, "rb") as fh:
+            return BaseOptions(model_asset_buffer=fh.read())
+    except TypeError:
+        pass  # older mediapipe: buffers aren't accepted
+    except OSError:
+        pass  # unreadable here too; let the path form report the problem
+    return BaseOptions(model_asset_path=path)
 
 
 def _get_detector():
@@ -164,6 +319,11 @@ def _get_detector():
     global _detector, _detector_error
     if _detector is not None or _detector_error:
         return _detector
+
+    level = stage()
+    if level == STAGE_OFF:
+        _detector_error = True
+        return None
 
     try:
         from mediapipe.tasks.python import BaseOptions, vision
@@ -173,20 +333,25 @@ def _get_detector():
             _detector_error = True
             return None
         kwargs = dict(
-            base_options=BaseOptions(model_asset_path=path),
+            base_options=_base_options(BaseOptions, path),
             running_mode=vision.RunningMode.IMAGE,
             num_poses=1,
         )
-        try:
-            # Also asks for a per-pixel person mask, which is what lifts a
-            # photograph off its background. Older builds don't accept the
-            # option, so fall back to landmarks alone rather than failing.
-            options = vision.PoseLandmarkerOptions(
-                output_segmentation_masks=True, **kwargs
-            )
-        except TypeError:
+        if level == STAGE_FULL:
+            try:
+                # Also asks for a per-pixel person mask, which is what lifts a
+                # photograph off its background. Older builds don't accept the
+                # option, so fall back to landmarks alone rather than failing.
+                kwargs["output_segmentation_masks"] = True
+                options = vision.PoseLandmarkerOptions(**kwargs)
+            except TypeError:
+                kwargs.pop("output_segmentation_masks", None)
+                options = vision.PoseLandmarkerOptions(**kwargs)
+        else:
             options = vision.PoseLandmarkerOptions(**kwargs)
-        _detector = vision.PoseLandmarker.create_from_options(options)
+
+        with _guarded(f"create:{level}"):
+            _detector = vision.PoseLandmarker.create_from_options(options)
         return _detector
     except Exception:
         _detector_error = True
@@ -220,9 +385,12 @@ def detect_person(image) -> Optional[Person]:
         import mediapipe as mp
 
         rgb = image.convert("RGB")
-        frame = np.asarray(rgb)
+        # MediaPipe wraps this buffer rather than copying it, so it has to be
+        # contiguous, uint8 and owned by us for the lifetime of the call.
+        frame = np.ascontiguousarray(np.asarray(rgb, dtype=np.uint8))
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-        result = detector.detect(mp_image)
+        with _guarded(f"detect:{stage()}"):
+            result = detector.detect(mp_image)
         if not result.pose_landmarks:
             return None
 
@@ -254,11 +422,17 @@ def _mask_image(result, size) -> Optional[object]:
         import numpy as np
         from PIL import Image as PILImage
 
-        data = np.asarray(masks[0].numpy_view(), dtype="float32")
+        # ``numpy_view`` is a window onto memory C++ still owns, so copy out of
+        # it before anything else - keeping the view alive past the result is a
+        # use-after-free, not a Python error.
+        data = np.array(masks[0].numpy_view(), dtype="float32", copy=True)
         if data.ndim == 3:
             data = data[:, :, 0]
+        if data.ndim != 2 or data.size == 0:
+            return None
         ramp = np.clip((data - _MASK_LO) / max(1e-6, _MASK_HI - _MASK_LO), 0.0, 1.0)
-        mask = PILImage.fromarray((ramp * 255.0).astype("uint8"), mode="L")
+        pixels = np.ascontiguousarray((ramp * 255.0).astype("uint8"))
+        mask = PILImage.fromarray(pixels, mode="L").copy()
         if mask.size != size:
             mask = mask.resize(size, PILImage.BILINEAR)
         return mask

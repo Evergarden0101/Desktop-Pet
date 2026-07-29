@@ -52,8 +52,15 @@ def run(config: AppConfig | None = None) -> int:
 
     from PySide6.QtWidgets import QApplication
 
+    from .ui import errors
     from .ui.controller import PetApp
     from .ui.icon import make_app_icon
+
+    # Before anything else, make failures leave a trace: a windowed build has
+    # no stdout or stderr at all, so without this both Python tracebacks and
+    # anything a native library says on its way down are simply lost.
+    errors.capture_output()
+    errors.install()
 
     config = config or AppConfig.load()
 

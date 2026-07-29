@@ -228,6 +228,25 @@ Architecture, invariants and extension points are documented in
   scaling (125 %/150 %…) — update if you're on 1.0.0. If pets ever get lost
   (monitor unplugged, resolution changed), **double-click the tray icon** or
   choose **Summon pets** from its menu to drop them back onto the main screen.
+- **The app closed while adding a character from a picture.** Photo import runs
+  MediaPipe, a native library — when it fails it can take the process down with
+  it, and no Python error handling can intercept that. Since v1.5.1 the app
+  notices that the previous import never finished and automatically asks for
+  less next time (first dropping background removal, then the detector
+  entirely), so **just start it again and retry** — the import will work, at
+  worst with slightly rougher cuts. To see what it settled on, and to try full
+  quality again once:
+
+  ```bat
+  DesktopPet.exe doctor
+  DesktopPet.exe doctor --reset-detector
+  ```
+
+  You can also pin the level yourself with the `DESKTOP_PET_DETECTOR`
+  environment variable (`full`, `landmarks` or `off`). `doctor` prints the paths
+  of two log files — `errors.log` and `session.log`, in
+  `%APPDATA%\DesktopPet\` — which are the useful things to attach to a bug
+  report.
 - **The pet ignores my windows.** Enable *“Walk on and climb application
   windows”* in Settings (`interact_with_windows`). Some windows (elevated/admin
   apps) can't be introspected without matching privileges.

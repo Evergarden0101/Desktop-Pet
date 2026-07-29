@@ -15,6 +15,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -42,6 +43,7 @@ from ..characters import (
     list_characters,
     rename_character,
 )
+from .errors import guard
 
 if TYPE_CHECKING:  # pragma: no cover
     from .controller import PetApp
@@ -194,6 +196,18 @@ class CharacterDialog(QDialog):
                 "(pip install mediapipe) for much better results from "
                 "photographs of people."
             )
+
+        # A previous import that never finished turns the detector down a
+        # notch, so say so rather than silently giving worse results.
+        stage = detect.stage()
+        if stage != detect.STAGE_FULL:
+            reason = detect.stage_reason()
+            note = f" ({reason})" if reason else ""
+            return (
+                f"Photos: {detect.STAGE_LABELS.get(stage, stage)}{note}. "
+                "Run 'DesktopPet.exe doctor --reset-detector' to try full "
+                "quality again."
+            )
         if detect.model_available():
             return "Photos: using person detection — best quality."
         return (
@@ -230,6 +244,7 @@ class CharacterDialog(QDialog):
             return self._infos[row]
         return None
 
+    @guard("showing the character", title="Preview failed")
     def _on_selection_changed(self, _row: int) -> None:
         info = self._selected()
         if info is None:
@@ -264,6 +279,7 @@ class CharacterDialog(QDialog):
                 button.setEnabled(info.can_delete)
 
     # -------------------------------------------------------------- actions
+    @guard("choosing a picture")
     def _browse(self) -> None:
         start = os.path.expanduser("~")
         path, _ = QFileDialog.getOpenFileName(
@@ -276,6 +292,7 @@ class CharacterDialog(QDialog):
         if not self.name_edit.text().strip():
             self.name_edit.setText(os.path.splitext(os.path.basename(path))[0])
 
+    @guard("adding the character", title="Could not add character")
     def _do_import(self) -> None:
         if not self._pending_image:
             QMessageBox.information(self, "Choose a picture", "Pick an image first.")
@@ -285,12 +302,14 @@ class CharacterDialog(QDialog):
 
         self.import_button.setEnabled(False)
         self.import_button.setText("Working...")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             info = import_character(self._pending_image, name, method=method)
         except CharacterError as exc:
             QMessageBox.warning(self, "Could not add character", str(exc))
             return
         finally:
+            QApplication.restoreOverrideCursor()
             self.import_button.setEnabled(True)
             self.import_button.setText("Add character")
 
@@ -310,6 +329,7 @@ class CharacterDialog(QDialog):
             self.app.set_character(info.name)
             self.reload(select=info.name)
 
+    @guard("switching character", title="Could not switch character")
     def _use_selected(self) -> None:
         info = self._selected()
         if info is None:
@@ -317,6 +337,7 @@ class CharacterDialog(QDialog):
         self.app.set_character(info.name)
         self.reload(select=info.name)
 
+    @guard("renaming the character", title="Could not rename")
     def _rename_selected(self) -> None:
         info = self._selected()
         if info is None or info.builtin:
@@ -335,6 +356,7 @@ class CharacterDialog(QDialog):
             self.app.set_character(renamed.name)
         self.reload(select=renamed.name)
 
+    @guard("duplicating the character", title="Could not duplicate")
     def _duplicate_selected(self) -> None:
         info = self._selected()
         if info is None:
@@ -346,6 +368,7 @@ class CharacterDialog(QDialog):
             return
         self.reload(select=copy.name)
 
+    @guard("deleting the character", title="Could not delete")
     def _delete_selected(self) -> None:
         info = self._selected()
         if info is None or info.builtin:
