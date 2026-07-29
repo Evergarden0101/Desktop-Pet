@@ -1,0 +1,20 @@
+# Generated sprite folders: rebuild with
+#   python tools/make_demo_figures.py   (or tools/extract_figures.py <image>)
+#   python tools/make_frames.py
+assets/pets/
+assets/config.json
+desktop_pet.json
+
+# Source images you drop in
+assets/input/*
+!assets/input/.gitkeep
+
+# Build output
+build/
+dist/
+*.spec
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/

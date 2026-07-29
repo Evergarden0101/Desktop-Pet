@@ -1,0 +1,7 @@
+PySide6>=6.5
+Pillow>=10.0
+numpy>=1.24
+
+# Optional but strongly recommended for photographs: gives a far cleaner
+# cutout than the built-in flood-fill fallback.
+#   pip install rembg onnxruntime

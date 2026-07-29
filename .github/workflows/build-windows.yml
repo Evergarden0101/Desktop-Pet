@@ -1,0 +1,46 @@
+name: Build Windows exe
+
+# Builds DesktopPet.exe on a Windows runner and uploads it as an artifact.
+# Use this if you do not have a Windows machine to run build_exe.py on.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/**"]
+    paths-ignore: ["**.md"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build sprite frames
+        # the repo ships placeholder figures; regenerate so the exe always
+        # contains frames matching the current generator
+        run: |
+          python tools/make_demo_figures.py
+          python tools/make_frames.py
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tests/test_physics.py
+
+      - name: Build exe
+        run: python build_exe.py --clean
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DesktopPet-windows
+          path: dist/DesktopPet.exe
+          if-no-files-found: error
