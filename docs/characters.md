@@ -92,8 +92,41 @@ forward-compatible.
 | `render.mode` | Uses | When |
 | --- | --- | --- |
 | `shapes` | `palette` + `outline` | No art; the rig is drawn as coloured capsules + a face. This is how the built-in **Pip** works. |
-| `image` | extracted part sprites | Your character has a `texture.png`. |
+| `image` | extracted part sprites | Your character has a `texture.png` and every part could be cut from it. |
+| `hybrid` | sprites *and* `palette` | Some parts came from the picture, the rest are painted. See below. |
 | `auto` | image if a texture exists, else shapes | Sensible default. |
+
+#### `hybrid`: a picture with drawn limbs
+
+Most pictures of people can't supply every body part. Arms folded across the
+chest leave no gap to cut along; a shot cropped at the thigh has no legs in it
+at all. Slicing "legs" out of a block of denim gives a pet that walks on two
+rectangles, and leaving the arms baked into the torso gives a pet with no arm
+bones — so it can't reach for a ledge while climbing or wave when poked.
+
+In `hybrid` mode each bone draws its sprite **if it has one**, and is otherwise
+painted as a tapered capsule in a colour sampled from the picture itself. The
+importer chooses this automatically; the extra fields it writes are:
+
+```jsonc
+"render": {
+  "mode": "hybrid",
+  "palette":       { "upper_arm_l": "#d15e38", "thigh_l": "#783826", … },
+  "limb_radii":    { "upper_arm_l": 13.9, "thigh_l": 24.2, … },  // half-widths
+  "joint_offsets": { "torso": 22.0, "hips": 9.0 },  // how far off centre
+  "outline": "#00000000", "outline_width": 0.0
+}
+```
+
+`joint_offsets` matters more than it looks: the rig hangs both arms off a single
+point at the top of the torso, which reads fine on a narrow capsule but puts a
+photograph's arms in the middle of its chest. The offsets move each limb chain
+sideways — rigidly, so nothing bends at the shoulder.
+
+Drawn limbs are sized in **head heights** (thigh 1.70, shin 1.55, upper arm
+1.15, and so on), because the picture has no length to measure. The "head" used
+is the smaller of the head crop and shoulder-to-hip ÷ 2.2 — a close-up portrait
+has a huge head crop, and quoting limbs in it puts the pet on stilts.
 
 ### Extraction methods
 
@@ -103,10 +136,23 @@ forward-compatible.
 | `regions` | Pillow | You give exact rectangles per part — pixel-perfect. `desktop-pet extract` writes these for you (converted from the auto slice) so you can hand-tune them. |
 | `pose` | `mediapipe`, `numpy` | Same as `auto_humanoid` but makes the intent explicit. Person detection is used automatically whenever it's available. |
 
-**Photographs need the detector.** Reading only the outline, a photo where hair
-falls over the shoulders has its widest upper-body point *inside the hair*, so
-the head is measured far too short and the crop cuts through the face. The pose
-model finds the real shoulders instead. Check yours with `desktop-pet doctor`.
+**Photographs need the detector**, for three separate reasons:
+
+1. **The background has to go.** A photo is an opaque rectangle, so every crop
+   taken from it carries a slab of wall or sky and the pet ends up with corners.
+   The model returns a per-pixel person mask, which becomes the image's alpha
+   channel before anything is measured or cut.
+2. **The shoulders have to be found.** Reading only the outline, a photo where
+   hair falls over the shoulders has its widest upper-body point *inside the
+   hair*, so the head is measured far too short and the crop cuts through the
+   face.
+3. **Missing limbs have to be *known* missing.** Landmarks carry a visibility
+   score, so "there are no knees or ankles in this photo" is a measurement — and
+   that's what selects `hybrid` mode. Without a detector a failed leg split just
+   means the legs are pressed together, so those pixels are cut as legs, as
+   before.
+
+Check what you'll get with `desktop-pet doctor`.
 
 ## The skeleton
 

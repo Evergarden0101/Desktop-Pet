@@ -177,3 +177,58 @@ def test_photo_head_crop_contains_the_whole_face():
     # The face occupies roughly y=100..200 in this 512px-tall photo.
     assert top <= 100
     assert bottom >= 200, "head crop cuts through the face"
+
+
+@pose_available
+def test_photo_background_is_removed():
+    """A photo is an opaque rectangle; the pet must be the person, not the frame."""
+    pytest.importorskip("skimage")
+    from skimage import data
+
+    photo = Image.fromarray(data.astronaut()).convert("RGBA")
+    person = detect.detect_person(photo)
+    assert person is not None and person.mask is not None
+
+    cut = detect.cutout(photo, person)
+    assert cut is not None
+    alpha = cut.split()[-1]
+    # Corners are background in this portrait and must have been cleared...
+    for corner in ((2, 2), (photo.width - 3, 2)):
+        assert alpha.getpixel(corner) < 40, f"background survived at {corner}"
+    # ...while the face itself stays fully opaque.
+    assert alpha.getpixel((250, 150)) > 200
+
+
+@pose_available
+def test_photo_becomes_a_hybrid_with_drawn_limbs():
+    """The sample case: arms folded, shot cropped at the hips."""
+    pytest.importorskip("skimage")
+    from skimage import data
+
+    photo = Image.fromarray(data.astronaut()).convert("RGBA")
+    result = extractor.extract_auto_humanoid(photo)
+
+    assert result.layout == "hybrid"
+    assert result.detector == "pose"
+    # Head and torso come from the photo; limbs are drawn, so they have no crop.
+    assert set(result.parts) == {"head", "torso"}
+    bones = {b["name"]: b for b in result.skeleton}
+    for name in ("upper_arm_l", "forearm_r", "thigh_l", "shin_r", "foot_l"):
+        assert name in bones and bones[name]["length"] > 0
+        assert result.palette.get(name), f"{name} has no colour to draw with"
+        assert result.limb_radii.get(name, 0) > 0
+
+    # Colours must come from the picture, not the fallbacks: this flight suit
+    # is orange, so the drawn sleeve has to be redder than it is blue.
+    r, g, b = (int(result.palette["upper_arm_l"][i:i + 2], 16) for i in (1, 3, 5))
+    assert r > b + 40, f"sleeve colour {result.palette['upper_arm_l']} isn't the suit"
+
+    # Limbs are anatomical multiples of a head, not of the photo's crop.
+    head = bones["head"]["length"]
+    leg = bones["thigh_l"]["length"] + bones["shin_l"]["length"]
+    assert 2.0 * head < leg * 1.6, "legs are stunted"
+    assert leg < 6.0 * head, "legs are on stilts"
+
+    # Arms and legs hang off the sides of the body, not its centre line.
+    assert result.joint_offsets["torso"] > 0
+    assert result.joint_offsets["hips"] > 0

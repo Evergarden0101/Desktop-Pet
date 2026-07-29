@@ -42,7 +42,8 @@ src/desktop_pet/
 ├── rig/
 │   ├── body_parts.py    BodyPart, the default humanoid BoneSpec rig
 │   ├── extractor.py     Cut a character image into parts (regions/auto/pose)
-│   ├── detect.py        Optional MediaPipe pose detection (people in photos)
+│   ├── detect.py        Optional MediaPipe pose + person segmentation
+│   ├── palette.py       Sample a character's own colours for drawn limbs
 │   ├── silhouette.py    Alpha-mask analysis + landmarks from detected poses
 │   ├── poses.py         PoseLibrary: procedural poses (walk, climb, creep, ...)
 │   ├── skeleton_utils.py  Derived measurements (foot-plant offset, span)
@@ -138,6 +139,24 @@ overlay.refresh()         # repaint + rebuild the click-through mask
    Scaling without this pushes the feet *through* the floor — a large pet ends
    up below the screen.
 
+11. **Cut what the picture has; draw what it doesn't.** `rig/extractor.py::
+   _limb_plan` decides, per limb group, whether a part is cropped from the
+   image or painted. The rule that keeps this honest: a limb may only be
+   *declared missing* by the detector, whose landmarks carry a visibility
+   score. Outline analysis failing to split the legs means they're pressed
+   together, not absent — cut them. Never send an abstract shape (a blob, a
+   mascot) down the drawn-limb path; it stays a `cutout`. A part with no region
+   is exactly what tells `ui/renderer.py::_draw_hybrid` to paint that bone, so
+   `hybrid_regions` and `hybrid_skeleton` must agree about which are which.
+
+12. **Background removal happens before any measurement.** A photograph is an
+   opaque rectangle: measure it first and the bounding box is the *frame*, the
+   head crop is a strip of sky, and every part carries a slab of wall.
+   `extractor.py::_prepare` applies the pose model's segmentation mask as the
+   image's alpha channel and hands the masked image to everything downstream —
+   so the image `extract_regions` cuts from must be the one `_prepare`
+   returned, not the caller's original.
+
 ## Running, testing, building
 
 ```bash
@@ -175,12 +194,15 @@ GitHub Release.
 - **New mode:** add an entry to `behaviors/autonomy.py::MODE_WEIGHTS` (weight
   multipliers per behaviour) plus a label in `MODE_LABELS`; menus and the
   settings dialog pick it up automatically.
-- **Import analysis order** (`rig/extractor.py::_analyze_best`): pose detection
-  (`rig/detect.py`, optional) -> silhouette outline -> proportion bands. The
-  detector is always optional and every failure path returns `None`, so import
-  never breaks when MediaPipe or its model is absent. Photos *need* it: an
-  outline cannot find shoulders under long hair, and the head crop then cuts
-  through the face.
+- **Import analysis order** (`rig/extractor.py::_prepare`): pose detection
+  (`rig/detect.py`, optional) -> background removal from its segmentation mask
+  -> silhouette outline -> proportion bands. The detector is always optional and
+  every failure path returns `None`, so import never breaks when MediaPipe or
+  its model is absent. Photos *need* it (see invariants 11 and 12).
+- **New drawn-limb colour:** sample it in `rig/palette.py::sample_character`
+  and map it onto part names in `limb_palette`. Sampling regions are keyed off
+  landmarks when they're available and off the silhouette box otherwise, and
+  every `_median_colour` may return `None` — always keep the fallback chain.
 - **New character:** drop a folder in the user characters dir with a
   `character.json` (+ optional `texture.png`). See `docs/characters.md`.
 - **New platform backend:** implement `PlatformBackend.snapshot()` and wire it

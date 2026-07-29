@@ -84,6 +84,24 @@ def cmd_list() -> int:
     return 0
 
 
+def _render_block(result) -> dict:
+    """Render settings for an imported character.
+
+    A "hybrid" character keeps its photo head and torso but has its limbs
+    drawn, so it also carries the colours and thicknesses to draw them with.
+    """
+    if result.layout == "hybrid":
+        return {
+            "mode": "hybrid",
+            "palette": result.palette or {},
+            "limb_radii": result.limb_radii or {},
+            "joint_offsets": result.joint_offsets or {},
+            "outline": "#00000000",
+            "outline_width": 0.0,
+        }
+    return {"mode": "image"}
+
+
 def cmd_doctor(download: bool = False) -> int:
     """Print a short health report - handy for diagnosing a frozen build."""
     import platform
@@ -174,7 +192,7 @@ def cmd_extract(
         scale=scale,
         extraction={"method": "regions", "regions": result.to_regions_dict()},
         skeleton=result.skeleton or [],
-        render={"mode": "image"},
+        render=_render_block(result),
     )
     pack.save_manifest()
 

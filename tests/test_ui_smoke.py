@@ -101,7 +101,9 @@ def test_image_character_renders(qapp, tmp_path):
 
     loaded = load_character(CharacterPack.load(str(tmp_path / "chars" / "Guy")))
     assert loaded.parts  # extracted sprites present
-    assert loaded.render["mode"] == "image"
+    # "image" blits every part; "hybrid" blits the parts the picture supplied
+    # and paints the limbs it couldn't (this drawing has no arms to cut).
+    assert loaded.render["mode"] in ("image", "hybrid")
 
 
 def test_poke_and_context_events(qapp):
@@ -350,7 +352,7 @@ def test_imported_character_renders_in_image_mode(qapp, tmp_path, monkeypatch):
         from desktop_pet.ui.renderer import PetRenderer
 
         loaded = load_character(CharacterPack.load(info.directory))
-        assert loaded.render["mode"] == "image"
+        assert loaded.render["mode"] in ("image", "hybrid")
         assert loaded.parts
 
         renderer = PetRenderer(loaded.render)
@@ -382,5 +384,69 @@ def test_imported_character_renders_in_image_mode(qapp, tmp_path, monkeypatch):
             if canvas.pixelColor(x, y).alpha() > 0
         )
         assert painted > 20, "image character drew almost nothing"
+    finally:
+        app.shutdown()
+
+
+def test_hybrid_mode_paints_limbs_that_have_no_sprite(qapp):
+    """A hybrid character draws its cut-out parts *and* its coloured limbs."""
+    from PySide6.QtGui import QImage, QPainter
+
+    from desktop_pet.rig.body_parts import DEFAULT_HUMANOID
+    from desktop_pet.ui.renderer import PetRenderer
+
+    render = {
+        "mode": "hybrid",
+        "palette": {name.part: "#ff0000" for name in DEFAULT_HUMANOID if name.part},
+        "limb_radii": {"thigh_l": 9.0, "thigh_r": 9.0},
+        "joint_offsets": {"torso": 14.0, "hips": 7.0},
+        "outline": "#00000000",
+        "outline_width": 0.0,
+    }
+    app = _make_app(qapp)
+    try:
+        _run_frames(app, 5)
+        pet = app.pets[0]
+        renderer = PetRenderer(render)  # no pixmaps at all: everything is drawn
+
+        canvas = QImage(400, 400, QImage.Format_ARGB32)
+        canvas.fill(0)
+        painter = QPainter(canvas)
+        painter.translate(-pet.position.x + 200, -pet.position.y + 200)
+        renderer.draw(painter, pet)
+        painter.end()
+
+        painted = sum(
+            1
+            for x in range(0, 400, 4)
+            for y in range(0, 400, 4)
+            if canvas.pixelColor(x, y).alpha() > 0
+        )
+        assert painted > 20, "hybrid mode drew nothing"
+    finally:
+        app.shutdown()
+
+
+def test_joint_offset_moves_a_whole_limb_rigidly(qapp):
+    """Shifting an arm off the chest must not bend it at the shoulder."""
+    from desktop_pet.ui.renderer import PetRenderer
+
+    app = _make_app(qapp)
+    try:
+        skeleton = app.pets[0].skeleton
+        cfg = {"joint_offsets": {"torso": 12.0, "hips": 6.0}}
+        shifts = [
+            PetRenderer._joint_shift(skeleton, part, cfg, 1.0)
+            for part in ("upper_arm_l", "forearm_l", "hand_l")
+        ]
+        first = shifts[0]
+        assert first.length() > 0
+        for other in shifts[1:]:
+            assert (other - first).length() < 1e-6
+
+        # The two sides go opposite ways, and an unlisted part doesn't move.
+        right = PetRenderer._joint_shift(skeleton, "upper_arm_r", cfg, 1.0)
+        assert (right + first).length() < 1e-6
+        assert PetRenderer._joint_shift(skeleton, "head", cfg, 1.0).length() == 0
     finally:
         app.shutdown()

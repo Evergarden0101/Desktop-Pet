@@ -56,6 +56,13 @@ _MODEL_NAME = "pose_landmarker_lite.task"
 _download_lock = threading.Lock()
 
 
+#: Segmentation confidences below/above which a pixel is definitely background
+#: or definitely the person; in between the alpha ramps, which keeps hair and
+#: shoulders from turning into a staircase of hard pixels.
+_MASK_LO = 0.35
+_MASK_HI = 0.65
+
+
 @dataclass
 class Person:
     """Detected body landmarks, in *pixel* coordinates of the source image."""
@@ -63,6 +70,9 @@ class Person:
     points: Dict[str, Tuple[float, float]] = field(default_factory=dict)
     visibility: Dict[str, float] = field(default_factory=dict)
     image_size: Tuple[int, int] = (0, 0)
+    #: Per-pixel "this is the person" confidence as a PIL ``L`` image the same
+    #: size as the source, or ``None`` when the model didn't produce one.
+    mask: Optional[object] = None
 
     def has(self, *names: str, threshold: float = VISIBLE) -> bool:
         """True when every named landmark was detected and is in frame."""
@@ -162,11 +172,20 @@ def _get_detector():
         if path is None:
             _detector_error = True
             return None
-        options = vision.PoseLandmarkerOptions(
+        kwargs = dict(
             base_options=BaseOptions(model_asset_path=path),
             running_mode=vision.RunningMode.IMAGE,
             num_poses=1,
         )
+        try:
+            # Also asks for a per-pixel person mask, which is what lifts a
+            # photograph off its background. Older builds don't accept the
+            # option, so fall back to landmarks alone rather than failing.
+            options = vision.PoseLandmarkerOptions(
+                output_segmentation_masks=True, **kwargs
+            )
+        except TypeError:
+            options = vision.PoseLandmarkerOptions(**kwargs)
         _detector = vision.PoseLandmarker.create_from_options(options)
         return _detector
     except Exception:
@@ -218,6 +237,70 @@ def detect_person(image) -> Optional[Person]:
             # Newer builds expose ``visibility``; treat a missing score as
             # "present" rather than discarding an otherwise good landmark.
             person.visibility[name] = float(getattr(point, "visibility", 1.0) or 0.0)
-        return person if person.points else None
+        if not person.points:
+            return None
+        person.mask = _mask_image(result, rgb.size)
+        return person
+    except Exception:
+        return None
+
+
+def _mask_image(result, size) -> Optional[object]:
+    """Turn the model's segmentation output into a PIL ``L`` mask, or ``None``."""
+    masks = getattr(result, "segmentation_masks", None)
+    if not masks:
+        return None
+    try:
+        import numpy as np
+        from PIL import Image as PILImage
+
+        data = np.asarray(masks[0].numpy_view(), dtype="float32")
+        if data.ndim == 3:
+            data = data[:, :, 0]
+        ramp = np.clip((data - _MASK_LO) / max(1e-6, _MASK_HI - _MASK_LO), 0.0, 1.0)
+        mask = PILImage.fromarray((ramp * 255.0).astype("uint8"), mode="L")
+        if mask.size != size:
+            mask = mask.resize(size, PILImage.BILINEAR)
+        return mask
+    except Exception:
+        return None
+
+
+def cutout(image, person, min_coverage: float = 0.01):
+    """Lift ``person`` off the background of ``image``, returning RGBA.
+
+    A photograph is an opaque rectangle: every crop taken from it carries a
+    slab of wall, sky or flag along with the body, and the pet ends up looking
+    like a photo with corners rather than like a character. The segmentation
+    mask becomes the image's alpha channel, so the bounding box, the row scan
+    and every part crop afterwards see only the person.
+
+    Returns ``None`` when there is no usable mask - an empty one, or one that
+    covers almost nothing - so the caller keeps the original picture.
+    """
+    mask = getattr(person, "mask", None)
+    if mask is None:
+        return None
+    try:
+        from PIL import Image as PILImage, ImageFilter
+
+        rgba = image.convert("RGBA")
+        if mask.size != rgba.size:
+            mask = mask.resize(rgba.size, PILImage.BILINEAR)
+        # A one-pixel blur softens the mask's staircase without eating hair.
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=1.0))
+        box = mask.getbbox()
+        if box is None:
+            return None
+        area = (box[2] - box[0]) * (box[3] - box[1])
+        if area < rgba.width * rgba.height * min_coverage:
+            return None
+
+        # Whichever says "transparent" wins, so an already-cut-out PNG keeps
+        # its own edges and only loses anything the model calls background.
+        from PIL import ImageChops
+
+        rgba.putalpha(ImageChops.darker(rgba.split()[-1], mask))
+        return rgba
     except Exception:
         return None

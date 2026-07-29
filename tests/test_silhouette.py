@@ -91,15 +91,27 @@ def test_detects_detached_arms():
 
 
 def test_arms_only_extracted_when_separable():
-    """Arms resting on the body stay in the torso instead of becoming blobs."""
+    """Arms resting on the body are drawn, never sliced off the torso."""
     detached = extractor.extract_auto_humanoid(arms_out_figure())
     assert "upper_arm_l" in detached.parts
     assert any(b["name"] == "upper_arm_l" for b in detached.skeleton)
 
     against = extractor.extract_auto_humanoid(tall_figure())
-    assert "upper_arm_l" not in against.parts
-    assert not any(b["name"] == "upper_arm_l" for b in against.skeleton)
+    assert "upper_arm_l" not in against.parts   # no strip cut off the torso
     assert "torso" in against.parts
+    # ...but the bone still exists, painted in a colour taken from the picture,
+    # so the pet can reach for ledges and wave.
+    assert against.layout == "hybrid"
+    assert any(b["name"] == "upper_arm_l" for b in against.skeleton)
+    assert against.palette.get("upper_arm_l")
+    assert against.limb_radii.get("upper_arm_l", 0) > 0
+
+
+def test_drawn_arms_do_not_replace_real_legs():
+    """A drawing whose legs are visible keeps them cut from the art."""
+    result = extractor.extract_auto_humanoid(tall_figure())
+    for part in ("thigh_l", "shin_r", "foot_l", "hips"):
+        assert part in result.parts, part
 
 
 def test_landmarks_are_ordered_top_to_bottom():

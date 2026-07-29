@@ -50,7 +50,7 @@ def test_import_creates_usable_pack(library, tmp_path):
     info = characters.import_character(src, "Hero")
 
     assert info.name == "Hero"
-    assert info.render_mode == "image"
+    assert info.render_mode in ("image", "hybrid")
     assert info.part_count >= 9
     assert os.path.exists(os.path.join(info.directory, "character.json"))
     assert os.path.exists(os.path.join(info.directory, "texture.png"))

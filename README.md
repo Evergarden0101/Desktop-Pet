@@ -41,12 +41,18 @@ animal, a blob — any PNG) and it gets cut into parts and animated automaticall
   picture, and it's cut into body parts and registered for you. The importer
   *measures the drawing* — finding the neck, shoulders, hips and the gap between
   the legs from the image itself — so cuts follow your art instead of fixed
-  proportions, and the rig keeps **your character's own build**. It copes with
-  photographs too: long hair, folded arms and thigh-cropped shots. A picture
-  with no usable legs (a head-and-shoulders crop) becomes a **cutout** pet that
-  still looks exactly like the source instead of being mangled into limbs that
-  aren't there. A built-in **character manager** lets you preview, switch,
-  rename, duplicate and delete.
+  proportions, and the rig keeps **your character's own build**. A built-in
+  **character manager** lets you preview, switch, rename, duplicate and delete.
+- 📷 **Photographs work.** Point it at a real photo and the person is **lifted
+  off the background** automatically, then given **real arms and legs**. Most
+  photos can't supply them — arms folded across the chest leave no gap to cut
+  along, and a shot cropped at the thigh has no legs in it at all — so instead
+  of slicing "legs" out of a block of denim, the pet keeps the photo's head and
+  body and gets limbs **drawn at human proportions, in colours sampled from the
+  picture itself** (that flight suit's orange, those jeans' blue). The result
+  looks like the person *and* can walk, climb and wave. A head-and-shoulders
+  crop with no body to speak of still becomes a **cutout** pet that looks
+  exactly like the source.
 - 🧸 **Two looks.** **Cute** (big-headed chibi with sparkly eyes, the default)
   or **Human** (realistic proportions) — switch from *Look* in the menu. No art
   needed: the built-in mascot is drawn procedurally and works instantly.
@@ -147,19 +153,24 @@ python run.py run --character Hero
 How a picture is analysed:
 
 1. **Person detection (photographs).** If [MediaPipe](https://github.com/google-ai-edge/mediapipe)
-   is available, a pose model locates the real shoulders, hips, knees and
-   ankles — with a confidence per point, so a waist-up shot is *known* to have
-   no legs rather than having them guessed. This is what stops a photo's head
-   crop from slicing the face in half when hair covers the shoulders. The
-   shipped `DesktopPet.exe` bundles it; for a source checkout run
-   `pip install mediapipe`. The ~6 MB model downloads once on first import.
+   is available, a pose model does three things: it returns a **per-pixel person
+   mask**, which becomes the image's alpha channel so the pet is the person and
+   not a rectangle of photo; it locates the **real shoulders**, which is what
+   stops a head crop from slicing the face in half when hair covers them; and it
+   reports a **confidence per landmark**, so a waist-up shot is *known* to have
+   no legs rather than having them guessed. The shipped `DesktopPet.exe` bundles
+   it; for a source checkout run `pip install mediapipe`. The ~6 MB model
+   downloads once on first import.
 2. **Silhouette analysis (drawings).** Otherwise the image's outline is
    measured — neck, shoulders, hips and the gap between the legs — and cuts
    follow those landmarks. Adapts to chibi, tall or arms-out artwork.
 3. **Proportion bands.** A last-resort fallback for shapes that aren't figures.
 
-Either way the character's bone proportions come from the drawing, so imports
-keep their own build. Run `desktop-pet doctor` to see which path you'll get.
+Whatever the picture *does* show is cut from it, so imports keep their own
+build. Whatever it can't show is **drawn** instead: limbs at human proportions,
+tinted with colours sampled from the picture, hung off the sides of the body
+rather than its centre line. Run `desktop-pet doctor` to see which path you'll
+get; the format is documented in [docs/characters.md](docs/characters.md).
 
 Extraction strategies (`--method`):
 

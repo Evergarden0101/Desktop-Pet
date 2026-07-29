@@ -51,6 +51,14 @@ _METHOD_CHOICES = [
     ("pose", "Pose detection (needs MediaPipe)"),
 ]
 
+#: Human-readable names for character.json's render modes.
+_MODE_LABELS = {
+    "shapes": "drawn shapes",
+    "image": "cut from a picture",
+    "hybrid": "picture + drawn limbs",
+    "auto": "automatic",
+}
+
 _FILE_FILTER = (
     "Images ("
     + " ".join(f"*{ext}" for ext in SUPPORTED_IMAGE_EXTENSIONS)
@@ -241,7 +249,7 @@ class CharacterDialog(QDialog):
         else:
             self.preview_label.setText("Drawn from shapes\n(no picture needed)")
 
-        bits = [f"Style: {info.render_mode}"]
+        bits = [f"Style: {_MODE_LABELS.get(info.render_mode, info.render_mode)}"]
         if info.part_count:
             bits.append(f"{info.part_count} body parts")
         if info.author:

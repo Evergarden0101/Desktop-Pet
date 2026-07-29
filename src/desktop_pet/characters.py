@@ -174,7 +174,7 @@ def import_character(
             scale=scale,
             extraction={"method": "regions", "regions": result.to_regions_dict()},
             skeleton=result.skeleton or [],
-            render={"mode": "image"},
+            render=_render_block(result),
         )
         pack.save_manifest()
     except OSError as exc:
@@ -185,6 +185,20 @@ def import_character(
         if info.name == safe:
             return info
     raise CharacterError("The character was created but could not be loaded.")
+
+
+def _render_block(result) -> Dict[str, object]:
+    """Render settings for an imported character (see cli._render_block)."""
+    if result.layout == "hybrid":
+        return {
+            "mode": "hybrid",
+            "palette": result.palette or {},
+            "limb_radii": result.limb_radii or {},
+            "joint_offsets": result.joint_offsets or {},
+            "outline": "#00000000",
+            "outline_width": 0.0,
+        }
+    return {"mode": "image"}
 
 
 def delete_character(name: str) -> None:

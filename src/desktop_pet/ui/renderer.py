@@ -46,6 +46,20 @@ _PART_RADIUS: Dict[str, float] = {
     "foot_r": 5.5,
 }
 
+#: Which joint a drawn limb hangs off, and which way along the body it sits.
+#: The rig attaches both arms to the torso's tip and both legs to the hips'
+#: tip - a single point. On a narrow capsule body that reads fine, but a
+#: photograph's torso is as wide as a pair of shoulders, and arms sprouting
+#: from the middle of the chest look like a tail. Drawn limbs are therefore
+#: shifted sideways off their parent joint, the whole chain by the same vector
+#: so the limb stays rigid.
+_LIMB_ROOT: Dict[str, tuple] = {
+    "upper_arm_l": ("torso", -1.0), "forearm_l": ("torso", -1.0), "hand_l": ("torso", -1.0),
+    "upper_arm_r": ("torso", 1.0), "forearm_r": ("torso", 1.0), "hand_r": ("torso", 1.0),
+    "thigh_l": ("hips", -1.0), "shin_l": ("hips", -1.0), "foot_l": ("hips", -1.0),
+    "thigh_r": ("hips", 1.0), "shin_r": ("hips", 1.0), "foot_r": ("hips", 1.0),
+}
+
 
 class PetRenderer:
     def __init__(self, render_cfg: Optional[dict] = None):
@@ -73,8 +87,8 @@ class PetRenderer:
         self._pixmaps_built = True
 
     def _effective_mode(self, pet: Pet) -> str:
-        if self.mode == "image":
-            return "image"
+        if self.mode in ("image", "hybrid"):
+            return self.mode
         if self.mode == "auto":
             return "image" if self._pixmaps else "shapes"
         return "shapes"
@@ -83,8 +97,11 @@ class PetRenderer:
     def draw(self, painter: QPainter, pet: Pet) -> None:
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        if self._effective_mode(pet) == "image":
+        mode = self._effective_mode(pet)
+        if mode == "image":
             self._draw_images(painter, pet)
+        elif mode == "hybrid":
+            self._draw_hybrid(painter, pet)
         else:
             self._draw_shapes(painter, pet)
         if pet.speech.visible:
@@ -141,6 +158,70 @@ class PetRenderer:
         from ..rig.extractor import part_axis
 
         return part_axis(part)
+
+    # -------------------------------------------------------- hybrid mode
+    def _draw_hybrid(self, painter: QPainter, pet: Pet) -> None:
+        """Photo sprites for the parts the picture supplies, drawn limbs for the rest.
+
+        Used for photographs that can't yield believable arms or legs. Each
+        bone either has a cut-out sprite (head, torso) or is painted as a
+        tapered capsule in a colour sampled from the picture, so the drawn
+        limbs read as belonging to the same person.
+        """
+        skeleton = pet.skeleton
+        scale = pet.config.scale
+        cfg = self.render_cfg
+        palette = cfg.get("palette", {})
+        radii = cfg.get("limb_radii", {})
+        outline = QColor(cfg.get("outline", "#00000000"))
+        outline_w = float(cfg.get("outline_width", 0.0))
+
+        for name in z_ordered_bone_names(skeleton):
+            bone = skeleton.bones[name]
+            part = bone.part or name
+            pixmap = self._pixmaps.get(part)
+            if pixmap is not None and not pixmap.isNull():
+                self._draw_part_pixmap(painter, bone, pixmap, scale, part)
+                continue
+
+            colour = palette.get(part)
+            if not colour:
+                continue  # nothing to draw this bone with
+            base_r = float(radii.get(part, self._radius_for(part))) * scale
+            start_r, end_r = self._limb_radii(part, base_r)
+            shift = self._joint_shift(skeleton, part, cfg, scale)
+            self._tapered_limb(
+                painter,
+                bone.world_pos + shift,
+                skeleton.tip_scaled_of(name) + shift,
+                start_r,
+                end_r,
+                QColor(colour),
+                outline,
+                outline_w,
+            )
+
+    @staticmethod
+    def _joint_shift(skeleton: Skeleton, part: str, cfg: dict, scale: float) -> Vec2:
+        """Sideways offset that moves a drawn limb off the body's centre line.
+
+        The shift is perpendicular to the limb's parent bone, so it follows the
+        body as it leans, and it is the same for every bone in one limb - the
+        arm or leg translates rigidly instead of bending at the shoulder.
+        """
+        root = _LIMB_ROOT.get(part)
+        if root is None:
+            return Vec2(0.0, 0.0)
+        parent_name, side = root
+        amount = float(cfg.get("joint_offsets", {}).get(parent_name, 0.0)) * scale
+        parent = skeleton.bones.get(parent_name)
+        if not amount or parent is None:
+            return Vec2(0.0, 0.0)
+        along = skeleton.tip_scaled_of(parent_name) - parent.world_pos
+        if along.length() < 1e-6:
+            return Vec2(0.0, 0.0)
+        normal = Vec2(-along.y, along.x).normalized()
+        return normal * (amount * side)
 
     # --------------------------------------------------------- shape mode
     def _draw_shapes(self, painter: QPainter, pet: Pet) -> None:

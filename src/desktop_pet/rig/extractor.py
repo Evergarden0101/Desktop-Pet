@@ -112,6 +112,14 @@ class ExtractionResult:
     #: Which analysis located the figure: "pose" (a detected human) or
     #: "outline" (silhouette measurement).
     detector: str = "outline"
+    #: Colours sampled from the picture, keyed by part, for limbs that are
+    #: drawn rather than cut out (``layout == "hybrid"``).
+    palette: Optional[Dict[str, str]] = None
+    #: Thickness of each drawn limb, in rig units.
+    limb_radii: Optional[Dict[str, float]] = None
+    #: How far off the body's centre line a drawn limb hangs, in rig units,
+    #: keyed by the joint it hangs from ("torso" = shoulders, "hips").
+    joint_offsets: Optional[Dict[str, float]] = None
 
     def to_regions_dict(self) -> Dict[str, dict]:
         """Serialize as a ``regions`` extraction block for character.json."""
@@ -218,11 +226,19 @@ def extract_auto_humanoid(image) -> ExtractionResult:
     blob, a sitting pose, a creature).
     """
     _require_pillow()
-    from . import silhouette as silhouette_mod
 
-    shape = _analyze_best(image)
+    image, shape = _prepare(image)
     if shape is None or not shape.confident:
         return _extract_bands(image, method="auto_humanoid")
+
+    # Can this picture actually supply limbs worth animating? Folded arms and a
+    # shot cropped at the thigh cannot: slicing "legs" out of a block of denim
+    # gives a pet that walks on two rectangles. Whatever the picture can't
+    # supply is *drawn* instead, at anatomical proportions and in colours taken
+    # from the picture, so it still looks like the same character.
+    draw_arms, draw_legs = _limb_plan(shape)
+    if draw_arms or draw_legs:
+        return _extract_hybrid(image, shape, draw_arms, draw_legs)
 
     regions = regions_from_silhouette(shape)
     # Sanity gate: if the geometry collapsed (tiny or overlapping rectangles),
@@ -242,13 +258,78 @@ def extract_auto_humanoid(image) -> ExtractionResult:
     return result
 
 
-def _analyze_best(image):
-    """Locate the figure, preferring a real human detector over the outline.
+def _limb_plan(shape) -> Tuple[bool, bool]:
+    """Decide which limbs have to be drawn instead of cut out.
 
-    Photographs defeat outline analysis - hair covering the shoulders makes the
-    widest point of the upper body land inside the hair, so the head comes out
-    half a face tall. When a pose model is installed it is asked first and its
-    landmarks win; otherwise we fall back to reading the silhouette.
+    Returns ``(draw_arms, draw_legs)``. Cutting a limb out is always preferable
+    *when the picture really shows it* - those pixels are the character. The
+    two cases where it doesn't work:
+
+    **Arms.** Folded across the chest, or simply hanging against the body, they
+    leave no gap to cut along. Slicing strips off the torso's edges just
+    duplicates those pixels into blobs that swing about, so previously they
+    were left baked into the torso - which meant the rig carried no arm bones
+    at all, and a pet with no arms can neither reach for a ledge while climbing
+    nor wave when you poke it. Drawing them fixes both.
+
+    **Legs.** Only a detector can *know* legs are missing: its landmarks carry a
+    confidence, so "no knees and no ankles in this photo" is a measurement.
+    Reading the outline alone, a failed leg split usually just means the legs
+    are pressed together - and those pixels really are the legs, so they get
+    cut as before.
+
+    An abstract shape (a ball, a mascot with no head-on-body structure) is
+    rigged as a cutout on purpose; giving it human arms and legs would be worse
+    than the single body sprite it gets today.
+    """
+    humanoid = getattr(shape, "source", "outline") == "pose"
+    if shape.layout == "cutout" and not humanoid:
+        return (False, False)
+    return (not shape.arms_detached, humanoid and not shape.legs_detected)
+
+
+def _extract_hybrid(image, shape, draw_arms: bool, draw_legs: bool) -> ExtractionResult:
+    """Cut what the picture supplies; draw the rest in the picture's colours."""
+    from . import palette as palette_mod
+
+    regions = hybrid_regions(shape, draw_arms, draw_legs)
+    if "head" not in regions or "torso" not in regions:
+        return _extract_bands(image, method="auto_humanoid")
+
+    result = extract_regions(image, regions)
+    result.method = "auto_humanoid"
+    result.content_box = shape.box
+    result.skeleton = hybrid_skeleton(shape, draw_arms, draw_legs)
+    result.layout = "hybrid"
+    result.detector = getattr(shape, "source", "outline")
+
+    try:
+        colours = palette_mod.sample_character(image, shape, getattr(shape, "person", None))
+    except Exception:
+        colours = {}
+    result.palette = palette_mod.limb_palette(colours)
+    result.limb_radii = limb_radii_for(shape)
+    result.joint_offsets = joint_offsets_for(shape)
+    return result
+
+
+def _prepare(image):
+    """Return ``(image, shape)``: the picture to cut from, and its landmarks.
+
+    Two things happen here, and the order matters.
+
+    **The person is lifted off the background.** A photograph is an opaque
+    rectangle, so *every* measurement and every crop taken from it would carry
+    a slab of wall or sky along with the body - the pet would be a photo with
+    corners, and the "head" would be a strip of whatever was behind it. When
+    the pose model returns a segmentation mask it becomes the image's alpha
+    channel, and everything downstream sees the person alone.
+
+    **The figure is located, detector first.** Outline analysis is defeated by
+    photographs: hair covering the shoulders makes the widest point of the
+    upper body land inside the hair, so the head comes out half a face tall.
+    The model's landmarks win when they're available; otherwise we read the
+    silhouette, which is the right tool for clean artwork.
     """
     from . import detect, silhouette as silhouette_mod
 
@@ -259,16 +340,27 @@ def _analyze_best(image):
 
     if person is not None:
         try:
+            cut = detect.cutout(image, person)
+        except Exception:
+            cut = None
+        if cut is not None:
+            image = cut
+        try:
             shape = silhouette_mod.from_person(image, person)
             if shape is not None:
-                return shape
+                return image, shape
         except Exception:
             pass
 
     try:
-        return silhouette_mod.analyze(image)
+        return image, silhouette_mod.analyze(image)
     except Exception:
-        return None
+        return image, None
+
+
+def _analyze_best(image):
+    """Landmarks for ``image`` alone (see :func:`_prepare` for the full path)."""
+    return _prepare(image)[1]
 
 
 def regions_from_silhouette(shape) -> Dict[str, dict]:
@@ -435,6 +527,213 @@ def skeleton_from_silhouette(shape) -> List[dict]:
             }
         )
     return bones
+
+
+#: Limb lengths as multiples of the character's own head height, from standard
+#: figure-drawing proportions (a ~7.5-head adult). These are used when the limbs
+#: have to be *drawn* rather than cut out, so they are believable by
+#: construction instead of inheriting whatever the photo happened to show.
+_LIMB_HEADS = {
+    "upper_arm": 1.15, "forearm": 1.05, "hand": 0.38,
+    "thigh": 1.70, "shin": 1.55, "foot": 0.36,
+}
+
+
+#: Shoulder-to-hip length of a standard figure, in head heights. Used to read a
+#: head-equivalent off the torso, which is the more trustworthy measurement.
+TORSO_HEADS = 2.2
+
+
+def _head_height(shape) -> float:
+    """Crown-to-chin height of the head crop."""
+    y0 = shape.box[1]
+    head_bottom = shape.neck_y + (shape.shoulder_y - shape.neck_y) * 0.5
+    return max(6.0, head_bottom - y0)
+
+
+def _limb_unit(shape) -> float:
+    """One "head" of anatomy in source pixels - the scale drawn limbs use.
+
+    The head crop is the obvious candidate and the least trustworthy one: it
+    starts at the top of the picture's content, so a hat, a ponytail or simply
+    a portrait shot at close range all inflate it, and limbs quoted in heads
+    then put the pet on stilts. The torso is measured shoulder-to-hip - between
+    two landmark pairs on the pose path - and is about
+    :data:`TORSO_HEADS` heads on a standard figure, so it is the better ruler.
+
+    Taking the smaller of the two keeps whichever measurement was truncated
+    from stretching the limbs: a big-haired portrait falls back to its torso, a
+    figure whose hips had to be guessed falls back to its head.
+    """
+    head = _head_height(shape)
+    torso = shape.hip_y - shape.shoulder_y
+    if torso > 4:
+        return max(6.0, min(head, torso / TORSO_HEADS))
+    return head
+
+
+def hybrid_skeleton(shape, draw_arms: bool = True, draw_legs: bool = True) -> List[dict]:
+    """Rig for a character whose limbs are partly drawn.
+
+    Anything cut from the picture keeps its *measured* length, so the pet still
+    has the character's own build. Anything drawn gets an anatomical length
+    derived from that character's own head height (:data:`_LIMB_HEADS`), which
+    is believable by construction rather than inheriting whatever the photo
+    happened to show - a shot cropped at the thigh has no leg length to read.
+    """
+    _, y0, _, y1 = shape.box
+    unit = 170.0 / max(1.0, y1 - y0)
+
+    head_len = _head_height(shape)
+    anatomy = _limb_unit(shape)
+
+    def L(value: float) -> float:
+        return round(value * unit, 2)
+
+    lengths = {
+        "head": L(head_len),
+        "torso": L(max(6.0, shape.hip_y - shape.shoulder_y)),
+    }
+
+    if draw_arms:
+        for side in ("l", "r"):
+            for key in ("upper_arm", "forearm", "hand"):
+                lengths[f"{key}_{side}"] = L(anatomy * _LIMB_HEADS[key])
+    else:
+        arm_span = max(6.0, shape.crotch_y - shape.shoulder_y)
+        for side in ("l", "r"):
+            lengths[f"upper_arm_{side}"] = L(arm_span * 0.42)
+            lengths[f"forearm_{side}"] = L(arm_span * 0.36)
+            lengths[f"hand_{side}"] = L(arm_span * 0.22)
+
+    if draw_legs:
+        lengths["hips"] = L(max(3.0, anatomy * 0.22))
+        for side in ("l", "r"):
+            for key in ("thigh", "shin", "foot"):
+                lengths[f"{key}_{side}"] = L(anatomy * _LIMB_HEADS[key])
+    else:
+        lengths["hips"] = L(max(2.0, shape.crotch_y - shape.hip_y))
+        foot_top = max(shape.foot_top, shape.crotch_y + (y1 - shape.crotch_y) * 0.55)
+        leg_span = max(6.0, foot_top - shape.crotch_y)
+        for side in ("l", "r"):
+            lengths[f"thigh_{side}"] = L(leg_span * 0.5)
+            lengths[f"shin_{side}"] = L(leg_span * 0.5)
+            lengths[f"foot_{side}"] = L(max(3.0, y1 - foot_top))
+
+    return [
+        {
+            "name": spec.name,
+            "parent": spec.parent,
+            "length": lengths.get(spec.name, spec.length),
+            "rest_angle": spec.rest_angle,
+            "part": spec.part,
+            "z_order": spec.z_order,
+        }
+        for spec in DEFAULT_HUMANOID
+    ]
+
+
+def hybrid_regions(shape, draw_arms: bool = True, draw_legs: bool = True) -> Dict[str, dict]:
+    """Cut the parts the picture supplies and leave the drawn ones out.
+
+    A *missing* region is exactly what tells the renderer to paint that bone
+    instead of blitting a sprite, so this is the one place that decides which
+    limbs come from the picture.
+    """
+    if not draw_legs:
+        # The picture has real legs, so take the full measured cut. Arms that
+        # are being drawn simply have no region there either: they are only
+        # ever added when the outline showed a gap to cut along.
+        return regions_from_silhouette(shape)
+
+    x0, y0, x1, y1 = shape.box
+    regions: Dict[str, dict] = {}
+
+    def add(name: str, rect) -> None:
+        left, top, right, bottom = (int(round(v)) for v in rect)
+        left, right = max(x0, left), min(x1, right)
+        top, bottom = max(y0, top), min(y1, bottom)
+        if right - left < 2 or bottom - top < 2:
+            return
+        pivot, anchor = part_axis(name)
+        regions[name] = {
+            "rect": [left, top, right, bottom],
+            "pivot": list(pivot),
+            "anchor": list(anchor),
+        }
+
+    head_left, head_right = _extent_between(shape, y0, shape.neck_y)
+    pad = (head_right - head_left) * 0.05
+    head_bottom = shape.neck_y + (shape.shoulder_y - shape.neck_y) * 0.5
+    add("head", (head_left - pad, y0, head_right + pad, head_bottom))
+
+    # Torso runs neck-to-hips: below that the drawn legs take over, so the
+    # crop stops before any cropped-off denim can come along for the ride.
+    torso_left, torso_right = _extent_between(shape, shape.shoulder_y, shape.hip_y)
+    add("torso", (torso_left, shape.neck_y, torso_right, shape.hip_y))
+
+    if not draw_arms and shape.arm_bounds:
+        arm_top, arm_bottom = shape.shoulder_y, shape.crotch_y
+        arm_span = max(1.0, arm_bottom - arm_top)
+        (left_lo, left_hi), (right_lo, right_hi) = shape.arm_bounds
+        for side, (lo, hi) in (("l", (left_lo, left_hi)), ("r", (right_lo, right_hi))):
+            upper_bottom = arm_top + arm_span * 0.42
+            fore_bottom = arm_top + arm_span * 0.78
+            add(f"upper_arm_{side}", (lo, arm_top, hi, upper_bottom))
+            add(f"forearm_{side}", (lo, upper_bottom, hi, fore_bottom))
+            add(f"hand_{side}", (lo, fore_bottom, hi, arm_bottom))
+
+    return regions
+
+
+def limb_radii_for(shape) -> Dict[str, float]:
+    """Thickness of each drawn limb, in rig units, from the body's own width."""
+    _, y0, _, y1 = shape.box
+    height = max(1.0, y1 - y0)
+    unit = 170.0 / height
+
+    left, right = _extent_between(shape, shape.shoulder_y, shape.waist_y)
+    shoulder_w = max(8.0, right - left)
+    hip_left, hip_right = _extent_between(shape, shape.hip_y, shape.crotch_y)
+    # A photo cropped at the hips has no rows between hip and crotch, so that
+    # extent collapses to the whole frame; anatomy says hips are a little
+    # narrower than shoulders, so cap it there rather than trusting the span.
+    hip_w = min(max(8.0, hip_right - hip_left), shoulder_w * 1.05)
+
+    # Radii are *half*-widths, so a limb is twice as wide as the number here.
+    arm = shoulder_w * 0.115 * unit
+    leg = hip_w * 0.20 * unit
+    return {
+        "upper_arm_l": arm, "upper_arm_r": arm,
+        "forearm_l": arm * 0.86, "forearm_r": arm * 0.86,
+        "hand_l": arm * 0.92, "hand_r": arm * 0.92,
+        "thigh_l": leg, "thigh_r": leg,
+        "shin_l": leg * 0.82, "shin_r": leg * 0.82,
+        # Feet are short bones, so a radius near their length rounds them into
+        # boots; keep them slim and let the length read as the foot.
+        "foot_l": leg * 0.62, "foot_r": leg * 0.62,
+        "hips": hip_w * 0.30 * unit,
+    }
+
+
+def joint_offsets_for(shape) -> Dict[str, float]:
+    """How far each drawn limb hangs off the body's centre line, in rig units.
+
+    Arms are set just inside the shoulder line and legs just inside the hips,
+    so a photograph's wide torso gets arms at its corners rather than a pair
+    sprouting from the middle of the chest.
+    """
+    _, y0, _, y1 = shape.box
+    unit = 170.0 / max(1.0, y1 - y0)
+
+    left, right = _extent_between(shape, shape.shoulder_y, shape.waist_y)
+    shoulder_w = max(8.0, right - left)
+    hip_left, hip_right = _extent_between(shape, shape.hip_y, shape.crotch_y)
+    hip_w = min(max(8.0, hip_right - hip_left), shoulder_w * 1.05)
+    return {
+        "torso": shoulder_w * 0.34 * unit,
+        "hips": hip_w * 0.22 * unit,
+    }
 
 
 def _cutout_skeleton(shape) -> List[dict]:

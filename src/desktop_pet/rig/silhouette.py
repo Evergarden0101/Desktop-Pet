@@ -106,6 +106,10 @@ class Silhouette:
     #: Which analysis produced these landmarks: "outline" (silhouette) or
     #: "pose" (a detected human). Surfaced so the importer can tell the user.
     source: str = "outline"
+    #: The detected landmarks behind a "pose" analysis, when there were any.
+    #: Colour sampling uses them to find the face far more precisely than the
+    #: bounding box can.
+    person: Optional[object] = None
 
     def row_at(self, y: int) -> Optional[RowInfo]:
         index = y - self.box[1]
@@ -486,6 +490,7 @@ def from_person(image, person) -> Optional[Silhouette]:
         layout=layout,
         legs_detected=legs_in_frame,
         source="pose",
+        person=person,
     )
 
 
