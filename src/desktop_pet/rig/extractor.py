@@ -307,9 +307,10 @@ def _extract_hybrid(image, shape, draw_arms: bool, draw_legs: bool) -> Extractio
         colours = palette_mod.sample_character(image, shape, getattr(shape, "person", None))
     except Exception:
         colours = {}
+    unit = hybrid_unit(shape, draw_arms, draw_legs)
     result.palette = palette_mod.limb_palette(colours)
-    result.limb_radii = limb_radii_for(shape)
-    result.joint_offsets = joint_offsets_for(shape)
+    result.limb_radii = limb_radii_for(shape, unit)
+    result.joint_offsets = joint_offsets_for(shape, unit)
     return result
 
 
@@ -543,6 +544,10 @@ _LIMB_HEADS = {
 #: head-equivalent off the torso, which is the more trustworthy measurement.
 TORSO_HEADS = 2.2
 
+#: Every character is normalised to this standing height in rig units, so the
+#: user's scale setting means the same thing whatever picture they imported.
+RIG_HEIGHT = 170.0
+
 
 def _head_height(shape) -> float:
     """Crown-to-chin height of the head crop."""
@@ -572,59 +577,80 @@ def _limb_unit(shape) -> float:
     return head
 
 
-def hybrid_skeleton(shape, draw_arms: bool = True, draw_legs: bool = True) -> List[dict]:
-    """Rig for a character whose limbs are partly drawn.
+def _hybrid_lengths(shape, draw_arms: bool, draw_legs: bool) -> Dict[str, float]:
+    """Every bone length for a hybrid rig, in **source pixels**.
 
     Anything cut from the picture keeps its *measured* length, so the pet still
-    has the character's own build. Anything drawn gets an anatomical length
-    derived from that character's own head height (:data:`_LIMB_HEADS`), which
-    is believable by construction rather than inheriting whatever the photo
-    happened to show - a shot cropped at the thigh has no leg length to read.
+    has the character's own build. Anything drawn gets an anatomical length -
+    a multiple of :func:`_limb_unit` from :data:`_LIMB_HEADS` - which is
+    believable by construction rather than inheriting whatever the photo
+    happened to show; a shot cropped at the thigh has no leg length to read.
     """
-    _, y0, _, y1 = shape.box
-    unit = 170.0 / max(1.0, y1 - y0)
-
-    head_len = _head_height(shape)
+    _, _, _, y1 = shape.box
     anatomy = _limb_unit(shape)
 
-    def L(value: float) -> float:
-        return round(value * unit, 2)
-
     lengths = {
-        "head": L(head_len),
-        "torso": L(max(6.0, shape.hip_y - shape.shoulder_y)),
+        "head": _head_height(shape),
+        "torso": max(6.0, shape.hip_y - shape.shoulder_y),
     }
 
     if draw_arms:
         for side in ("l", "r"):
             for key in ("upper_arm", "forearm", "hand"):
-                lengths[f"{key}_{side}"] = L(anatomy * _LIMB_HEADS[key])
+                lengths[f"{key}_{side}"] = anatomy * _LIMB_HEADS[key]
     else:
         arm_span = max(6.0, shape.crotch_y - shape.shoulder_y)
         for side in ("l", "r"):
-            lengths[f"upper_arm_{side}"] = L(arm_span * 0.42)
-            lengths[f"forearm_{side}"] = L(arm_span * 0.36)
-            lengths[f"hand_{side}"] = L(arm_span * 0.22)
+            lengths[f"upper_arm_{side}"] = arm_span * 0.42
+            lengths[f"forearm_{side}"] = arm_span * 0.36
+            lengths[f"hand_{side}"] = arm_span * 0.22
 
     if draw_legs:
-        lengths["hips"] = L(max(3.0, anatomy * 0.22))
+        lengths["hips"] = max(3.0, anatomy * 0.22)
         for side in ("l", "r"):
             for key in ("thigh", "shin", "foot"):
-                lengths[f"{key}_{side}"] = L(anatomy * _LIMB_HEADS[key])
+                lengths[f"{key}_{side}"] = anatomy * _LIMB_HEADS[key]
     else:
-        lengths["hips"] = L(max(2.0, shape.crotch_y - shape.hip_y))
+        lengths["hips"] = max(2.0, shape.crotch_y - shape.hip_y)
         foot_top = max(shape.foot_top, shape.crotch_y + (y1 - shape.crotch_y) * 0.55)
         leg_span = max(6.0, foot_top - shape.crotch_y)
         for side in ("l", "r"):
-            lengths[f"thigh_{side}"] = L(leg_span * 0.5)
-            lengths[f"shin_{side}"] = L(leg_span * 0.5)
-            lengths[f"foot_{side}"] = L(max(3.0, y1 - foot_top))
+            lengths[f"thigh_{side}"] = leg_span * 0.5
+            lengths[f"shin_{side}"] = leg_span * 0.5
+            lengths[f"foot_{side}"] = max(3.0, y1 - foot_top)
 
+    return lengths
+
+
+def hybrid_unit(shape, draw_arms: bool = True, draw_legs: bool = True) -> float:
+    """Rig units per source pixel for a hybrid character.
+
+    Normalising by the *finished rig* rather than by the source crop is what
+    keeps an imported photo the same size as every other character: a waist-up
+    shot's drawn legs are height the crop never contained, so scaling by the
+    crop would make that pet twice as tall at the same user scale setting.
+
+    Radii and joint offsets have to use this too, or the limbs come out fat.
+    """
+    lengths = _hybrid_lengths(shape, draw_arms, draw_legs)
+    standing = sum(
+        lengths[name]
+        for name in ("head", "torso", "hips", "thigh_l", "shin_l", "foot_l")
+    )
+    return RIG_HEIGHT / standing if standing > 1e-6 else 1.0
+
+
+def hybrid_skeleton(shape, draw_arms: bool = True, draw_legs: bool = True) -> List[dict]:
+    """Rig for a character whose limbs are partly drawn."""
+    lengths = _hybrid_lengths(shape, draw_arms, draw_legs)
+    unit = hybrid_unit(shape, draw_arms, draw_legs)
     return [
         {
             "name": spec.name,
             "parent": spec.parent,
-            "length": lengths.get(spec.name, spec.length),
+            "length": round(lengths[spec.name] * unit, 2)
+            if spec.name in lengths
+            else spec.length,
             "rest_angle": spec.rest_angle,
             "part": spec.part,
             "z_order": spec.z_order,
@@ -686,19 +712,26 @@ def hybrid_regions(shape, draw_arms: bool = True, draw_legs: bool = True) -> Dic
     return regions
 
 
-def limb_radii_for(shape) -> Dict[str, float]:
-    """Thickness of each drawn limb, in rig units, from the body's own width."""
-    _, y0, _, y1 = shape.box
-    height = max(1.0, y1 - y0)
-    unit = 170.0 / height
-
+def _body_widths(shape) -> Tuple[float, float]:
+    """Shoulder and hip widths in source pixels."""
     left, right = _extent_between(shape, shape.shoulder_y, shape.waist_y)
     shoulder_w = max(8.0, right - left)
     hip_left, hip_right = _extent_between(shape, shape.hip_y, shape.crotch_y)
     # A photo cropped at the hips has no rows between hip and crotch, so that
     # extent collapses to the whole frame; anatomy says hips are a little
     # narrower than shoulders, so cap it there rather than trusting the span.
-    hip_w = min(max(8.0, hip_right - hip_left), shoulder_w * 1.05)
+    return shoulder_w, min(max(8.0, hip_right - hip_left), shoulder_w * 1.05)
+
+
+def limb_radii_for(shape, unit: Optional[float] = None) -> Dict[str, float]:
+    """Thickness of each drawn limb, in rig units, from the body's own width.
+
+    ``unit`` is rig units per source pixel; pass the same value the skeleton
+    was built with (:func:`hybrid_unit`) or the limbs won't match their bones.
+    """
+    if unit is None:
+        unit = hybrid_unit(shape)
+    shoulder_w, hip_w = _body_widths(shape)
 
     # Radii are *half*-widths, so a limb is twice as wide as the number here.
     arm = shoulder_w * 0.115 * unit
@@ -716,20 +749,17 @@ def limb_radii_for(shape) -> Dict[str, float]:
     }
 
 
-def joint_offsets_for(shape) -> Dict[str, float]:
+def joint_offsets_for(shape, unit: Optional[float] = None) -> Dict[str, float]:
     """How far each drawn limb hangs off the body's centre line, in rig units.
 
     Arms are set just inside the shoulder line and legs just inside the hips,
     so a photograph's wide torso gets arms at its corners rather than a pair
-    sprouting from the middle of the chest.
+    sprouting from the middle of the chest. ``unit`` is as in
+    :func:`limb_radii_for`.
     """
-    _, y0, _, y1 = shape.box
-    unit = 170.0 / max(1.0, y1 - y0)
-
-    left, right = _extent_between(shape, shape.shoulder_y, shape.waist_y)
-    shoulder_w = max(8.0, right - left)
-    hip_left, hip_right = _extent_between(shape, shape.hip_y, shape.crotch_y)
-    hip_w = min(max(8.0, hip_right - hip_left), shoulder_w * 1.05)
+    if unit is None:
+        unit = hybrid_unit(shape)
+    shoulder_w, hip_w = _body_widths(shape)
     return {
         "torso": shoulder_w * 0.34 * unit,
         "hips": hip_w * 0.22 * unit,

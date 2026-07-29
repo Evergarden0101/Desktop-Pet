@@ -146,3 +146,32 @@ def test_drawn_limbs_are_slimmer_than_the_body():
     assert radii["hips"] > radii["thigh_l"]
     offsets = extractor.joint_offsets_for(shape)
     assert offsets["torso"] > offsets["hips"] > 0
+
+
+def test_hybrid_rig_is_normalised_to_the_standard_height():
+    """A waist-up photo's drawn legs are height its crop never contained.
+
+    Scaling by the crop would make that pet twice as tall as everyone else at
+    the same user scale setting, so the *finished rig* is what gets normalised.
+    """
+    img = dressed_figure()
+    shape = silhouette.analyze(img)
+    for draw_arms, draw_legs in ((True, True), (True, False), (False, True)):
+        bones = {b["name"]: b["length"]
+                 for b in extractor.hybrid_skeleton(shape, draw_arms, draw_legs)}
+        standing = sum(bones[n] for n in
+                       ("head", "torso", "hips", "thigh_l", "shin_l", "foot_l"))
+        assert standing == pytest.approx(extractor.RIG_HEIGHT, abs=0.5), (
+            draw_arms, draw_legs, standing)
+
+
+def test_radii_follow_the_rig_not_the_crop():
+    """Thickness must use the same unit as the bones, or limbs come out fat."""
+    img = dressed_figure()
+    shape = silhouette.analyze(img)
+    unit = extractor.hybrid_unit(shape, True, True)
+    radii = extractor.limb_radii_for(shape, unit)
+    bones = {b["name"]: b["length"] for b in extractor.hybrid_skeleton(shape, True, True)}
+    # A thigh is a limb, not a barrel: much longer than it is wide.
+    assert bones["thigh_l"] > radii["thigh_l"] * 2
+    assert bones["upper_arm_l"] > radii["upper_arm_l"] * 2

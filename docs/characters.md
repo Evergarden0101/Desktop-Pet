@@ -128,6 +128,12 @@ Drawn limbs are sized in **head heights** (thigh 1.70, shin 1.55, upper arm
 is the smaller of the head crop and shoulder-to-hip ÷ 2.2 — a close-up portrait
 has a huge head crop, and quoting limbs in it puts the pet on stilts.
 
+The finished rig is then normalised to the same standing height as every other
+character (~170 rig units), so your `scale` setting means the same thing no
+matter what you imported. Normalising by the *source crop* instead would make a
+pet from a waist-up photo twice everyone else's size, since its drawn legs are
+height the crop never contained.
+
 ### Extraction methods
 
 | `method` | Needs | Notes |
