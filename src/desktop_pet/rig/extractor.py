@@ -359,11 +359,6 @@ def _prepare(image):
         return image, None
 
 
-def _analyze_best(image):
-    """Landmarks for ``image`` alone (see :func:`_prepare` for the full path)."""
-    return _prepare(image)[1]
-
-
 def regions_from_silhouette(shape) -> Dict[str, dict]:
     """Turn silhouette landmarks into per-part rectangles and pivots.
 
@@ -494,7 +489,6 @@ def skeleton_from_silhouette(shape) -> List[dict]:
     def L(value: float) -> float:
         return round(value * unit, 2)
 
-    template = {spec.name: spec for spec in DEFAULT_HUMANOID}
     lengths = {
         "hips": L(hips_len),
         "torso": L(torso_len),
