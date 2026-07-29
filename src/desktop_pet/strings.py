@@ -16,9 +16,19 @@ ZH = {
     "quit": "退出",
     "tray": "桌面宠物",
     "about": "关于",
+    "manager": "角色管理",
+    "import_image": "从图片导入…",
+    "rebuild": "重新生成",
+    "rename": "重命名",
+    "delete": "删除",
+    "on_desktop": "桌面上的数量",
+    "size": "大小",
+    "speed": "速度",
+    "settings": "设置",
     "about_text": ("桌面宠物\n\n右键点我可以喊老公。\n"
                    "拖动可以把我拿起来，松手我会掉下去。\n"
-                   "我会沿着窗口边缘爬来爬去。"),
+                   "我会沿着窗口边缘爬来爬去。\n\n"
+                   "在「角色管理」里可以从图片导入新角色。"),
 }
 
 EN = {
@@ -33,9 +43,19 @@ EN = {
     "quit": "Quit",
     "tray": "Desktop Pet",
     "about": "About",
+    "manager": "Character Manager",
+    "import_image": "Import image...",
+    "rebuild": "Rebuild",
+    "rename": "Rename",
+    "delete": "Delete",
+    "on_desktop": "On desktop",
+    "size": "Size",
+    "speed": "Speed",
+    "settings": "Settings",
     "about_text": ("Desktop Pet\n\nRight-click me to call your husband.\n"
                    "Drag to pick me up, let go and I fall.\n"
-                   "I crawl along the edges of your windows."),
+                   "I crawl along the edges of your windows.\n\n"
+                   "Import new characters from an image in the Character Manager."),
 }
 
 HUSBAND_ZH = ["老公~", "老公抱抱！", "老公你看我！", "老公，陪我玩嘛~",

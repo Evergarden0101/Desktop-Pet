@@ -34,7 +34,9 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python tests/test_physics.py
+        run: |
+          python tests/test_physics.py
+          python tests/test_manager.py
 
       - name: Build exe
         run: python build_exe.py --clean

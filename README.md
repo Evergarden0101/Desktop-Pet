@@ -19,20 +19,41 @@ own image, see step 1.)*
   crawl off a ledge.
 - Right-click any pet → **Call Husband** (喊老公) pops a speech bubble beside
   her head. The other pets answer a moment later.
+- The whole pipeline is **built into the app**: import an image, tune the
+  cutout with a live preview, and manage your cast from the Character Manager.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-
-python tools/make_demo_figures.py   # placeholder figures, so you can try it now
-python tools/make_frames.py         # build the animation frames
-python run.py                       # run it
+python run.py
 ```
+
+That's it. On first run, with no characters installed, the app builds the
+placeholder cast itself so there is always something on screen. Then right-click
+a pet → **Character Manager** to import your own image.
 
 ## 1. Use your own image
 
-Put your image anywhere and run:
+### From inside the app (no command line)
+
+Right-click any pet → **Character Manager** → **Import image…**
+
+![import](docs/import.png)
+
+Pick your image and the app removes the background, finds the people, and shows
+you a cutout of each one. Drag **Background tolerance** and the preview
+re-cuts live — that is the fastest way to fix a cutout that lost a limb or kept
+a slab of backdrop. Untick anyone you don't want, press **Import**, and they
+animate and join the cast.
+
+![manager](docs/manager.png)
+
+From the Character Manager you can also rename a character, change how many
+copies of her are on the desktop, resize the whole cast, **Rebuild** her frames,
+or **Delete** her for good.
+
+### From the command line
 
 ```bash
 pip install rembg onnxruntime          # strongly recommended for photos
@@ -43,10 +64,11 @@ python run.py
 
 `extract_figures.py` removes the background, splits the remaining mask into one
 blob per person, drops everything too small or too wide to be a person, and
-writes `assets/pets/figure_01/base.png`, `figure_02/…` and so on.
+writes `assets/pets/figure_01/base.png`, `figure_02/…` and so on. It runs the
+exact same code as the Character Manager.
 
 Delete the `assets/pets/demo_*` folders once you have your own figures, or the
-demos will show up alongside them.
+demos will show up alongside them — or just remove them in the manager.
 
 **Best results come from a full-body image** — head to feet, figures not
 overlapping. The rig locates the neck, waist and knees from the silhouette, so
@@ -64,9 +86,24 @@ Other useful flags:
 | Flag | Meaning |
 | --- | --- |
 | `--no-rembg` | skip the ML matting, use the border flood fill |
+| `--tolerance 30` | flood-fill colour tolerance (the manager's slider) |
 | `--min-area 0.002` | keep smaller blobs (use if a figure went missing) |
 | `--max-figures 3` | keep only the largest N people |
 | `--height 480` | cutout resolution before scaling |
+
+### A note on background removal
+
+`rembg` gives far better cutouts on photographs, but it needs `onnxruntime` and
+downloads a model, so it is **not** bundled in the exe. Without it both the app
+and the CLI fall back to a border flood fill, which works well on flat or
+already-transparent backgrounds. The two ways it fails are worth knowing:
+
+- **tolerance too high** — it eats parts of the figure whose colour is close to
+  the background (bare legs against a pale wall are the classic case)
+- **tolerance too low** — a slab of background survives around the figure
+
+Both are caught and reported: the manager marks the affected figure with `(!)`
+and a tooltip, the CLI prints a warning. Move the slider and watch the preview.
 
 ## 2. Build the .exe
 
@@ -85,18 +122,25 @@ you: **Actions → Build Windows exe → Run workflow**, then download the
 `DesktopPet-windows` artifact. PyInstaller cannot cross-compile, so a Linux or
 macOS build produces a binary for *that* platform, not a `.exe`.
 
-To swap figures **after** building, drop an `assets/` folder next to the exe —
-it is preferred over the copy bundled inside, so no rebuild is needed.
+You never need to rebuild the exe to change characters — import them from the
+Character Manager instead. The exe keeps its assets in a writable folder
+(`assets/` next to the exe, or `%LOCALAPPDATA%\DesktopPet\assets` if the exe
+sits somewhere read-only like Program Files), seeded from the bundled copy on
+first run. Anything you import lands there and survives restarts.
 
 ## Controls
 
 | Action | Result |
 | --- | --- |
-| Right-click a pet | menu: Call Husband, Head Pat, Come Here, Pause, One More, Quit |
+| Right-click a pet | menu: Call Husband, Head Pat, Come Here, Character Manager, Pause, One More, Quit |
 | **Call Husband** | speech bubble beside her head; the others answer |
+| **Character Manager** | import images, rename, resize, add or remove characters |
 | Double-click | same as Call Husband |
 | Left-drag | pick her up; let go and she falls to the nearest surface |
 | Tray icon | same menu, and the reliable way to quit |
+
+Sending every pet away does not close the app — the tray icon keeps it
+reachable, so you can bring them back from the manager.
 
 Menus and bubbles follow your system language (Chinese or English). Force it
 with `python run.py --lang zh` or `--lang en`.
@@ -152,21 +196,33 @@ outside Windows.
 
 ```bash
 QT_QPA_PLATFORM=offscreen python tests/test_physics.py
+QT_QPA_PLATFORM=offscreen python tests/test_manager.py
 ```
 
-Covers ledge and wall detection, climbing, falling, landing on window tops,
-staying on screen, and the speech bubble anchoring to the head.
+`test_physics.py` covers ledge and wall detection, climbing, falling, landing
+on window tops, staying on screen, and the speech bubble anchoring to the head.
+
+`test_manager.py` runs a full round trip on a synthetic photo: first-run
+seeding, import, per-figure selection, frame generation, rebuild, rename, live
+resize, population control and delete.
 
 ## Layout
 
 ```
-tools/extract_figures.py      image -> one transparent cutout per person
-tools/make_frames.py          cutout -> crawl + play frames and meta.json
-tools/make_demo_figures.py    placeholder figures
-tools/rig.py                  joint finding, colour sampling, limb drawing
+src/desktop_pet/pipeline/     the image pipeline, no Qt: importable from both
+  rig.py                        joint finding, colour sampling, limb drawing
+  extract.py                    image -> one transparent cutout per person
+  frames.py                     cutout -> crawl + play frames and meta.json
+  demo.py                       placeholder figures
+src/desktop_pet/manager.py    Character Manager and the import dialog
 src/desktop_pet/pet.py        one pet: physics, dragging, right-click menu
 src/desktop_pet/obstacles.py  windows -> ledges and walls
 src/desktop_pet/bubble.py     the speech bubble
+src/desktop_pet/roster.py     names, and who is on the desktop
 src/desktop_pet/app.py        spawning, the clock, the tray icon
+tools/*.py                    command-line front ends for the pipeline
 build_exe.py                  PyInstaller packaging
 ```
+
+The pipeline lives inside the package rather than in `tools/` precisely so the
+exe can run it: the Character Manager and the CLI call the same functions.

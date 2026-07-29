@@ -84,6 +84,24 @@ class Pet(QWidget):
             self.frame_index = 0
             self._frame_clock = 0.0
 
+    def set_assets(self, assets: PetAssets) -> None:
+        """Swap in rebuilt or rescaled sprites without moving the pet.
+
+        Her feet stay where they were, so a size change does not leave her
+        hovering above the ledge or sunk into it.
+        """
+        feet = self.bottom
+        self.assets = assets
+        if self.anim_name not in assets.anims:
+            self.anim_name = "crawl"
+        self.frame_index = 0
+        self._frame_clock = 0.0
+        self._mask_cache.clear()
+        self.resize(*assets.size)
+        self.y = feet - self.height()
+        self._apply_frame()
+        self.move(int(self.x), int(self.y))
+
     # -- simulation -------------------------------------------------------
 
     def tick(self, dt: float, terrain: Terrain) -> None:
@@ -264,6 +282,8 @@ class Pet(QWidget):
         menu.addAction(s["add_pet"]).triggered.connect(self.app.spawn_random)
         menu.addAction(s["remove_pet"]).triggered.connect(lambda: self.app.remove(self))
         menu.addSeparator()
+
+        menu.addAction(s["manager"]).triggered.connect(self.app.open_manager)
 
         menu.addAction(s["about"]).triggered.connect(self.show_about)
         menu.addAction(s["quit"]).triggered.connect(self.app.quit)

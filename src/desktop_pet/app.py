@@ -13,9 +13,13 @@ from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import obstacles
 from .assets import PetAssets, discover
-from .config import Config, asset_root
+from .config import Config, pets_dir as default_pets_dir
+from .manager import ManagerWindow
 from .obstacles import Terrain
 from .pet import Pet
+from .pipeline.demo import write_demo_figures
+from .pipeline.frames import build_all
+from .roster import Roster
 from .strings import Strings
 
 
@@ -25,8 +29,13 @@ class PetApp:
         self.strings = Strings(cfg.language)
         self.paused = False
         self.pets: list[Pet] = []
+        self.pets_dir = pets_dir
+        self.roster = Roster(pets_dir.parent / "roster.json")
+        self.manager: ManagerWindow | None = None
 
         self.assets: list[PetAssets] = discover(pets_dir, cfg.scale)
+        if not self.assets:
+            self._seed_demo_characters()
         if not self.assets:
             raise SystemExit(
                 f"No pets found in {pets_dir}.\n"
@@ -35,10 +44,11 @@ class PetApp:
 
         self.terrain: Terrain = obstacles.scan(set(), cfg.obey_window_edges)
 
-        wanted = count if count is not None else len(self.assets)
+        startup = [a for a in self.assets if self.roster.enabled(a.name)] or self.assets
+        wanted = count if count is not None else len(startup)
         wanted = max(1, min(wanted, cfg.max_pets))
         for i in range(wanted):
-            self.spawn(self.assets[i % len(self.assets)])
+            self.spawn(startup[i % len(startup)])
 
         self.tray = self._build_tray()
 
@@ -49,6 +59,73 @@ class PetApp:
         self.scan_timer = QTimer()
         self.scan_timer.timeout.connect(self._rescan)
         self.scan_timer.start(cfg.window_scan_ms)
+
+    # -- characters -------------------------------------------------------
+
+    def _seed_demo_characters(self) -> None:
+        """First run with nothing installed: build the placeholders."""
+        try:
+            folders = write_demo_figures(self.pets_dir)
+            build_all(folders)
+            self.assets = discover(self.pets_dir, self.cfg.scale)
+        except Exception as exc:
+            print(f"could not create placeholder characters: {exc}")
+
+    def reload_assets(self) -> None:
+        """Re-read the sprite folders after an import, rebuild or resize."""
+        self.assets = discover(self.pets_dir, self.cfg.scale)
+        by_name = {a.name: a for a in self.assets}
+        for pet in list(self.pets):
+            replacement = by_name.get(pet.assets.name)
+            if replacement is None:
+                self._retire(pet)          # her folder was deleted
+            elif replacement is not pet.assets:
+                pet.set_assets(replacement)
+        if self.assets:
+            self.tray.setIcon(QIcon(self.assets[0].icon_pixmap()))
+
+    def set_scale(self, scale: float) -> None:
+        self.cfg.scale = max(0.1, min(1.5, float(scale)))
+        self.cfg.save()
+        self.reload_assets()
+
+    def population(self, key: str) -> int:
+        return len([p for p in self.pets if p.assets.name == key])
+
+    def set_population(self, key: str, wanted: int) -> None:
+        """Put exactly ``wanted`` copies of one character on the desktop."""
+        assets = next((a for a in self.assets if a.name == key), None)
+        if assets is None:
+            return
+        wanted = max(0, min(int(wanted), self.cfg.max_pets))
+        while self.population(key) > wanted:
+            self._retire(next(p for p in reversed(self.pets)
+                              if p.assets.name == key))
+        while self.population(key) < wanted and len(self.pets) < self.cfg.max_pets:
+            self.spawn(assets)
+        self.roster.set_enabled(key, wanted > 0)
+
+    def despawn_all(self, key: str) -> None:
+        for pet in [p for p in self.pets if p.assets.name == key]:
+            self._retire(pet)
+
+    def _retire(self, pet: Pet) -> None:
+        if pet in self.pets:
+            self.pets.remove(pet)
+        pet.close()
+        pet.deleteLater()
+
+    def open_manager(self) -> None:
+        if self.manager is None:
+            self.manager = ManagerWindow(self)
+            self.manager.finished.connect(self._manager_closed)
+        self.manager.refresh()
+        self.manager.show()
+        self.manager.raise_()
+        self.manager.activateWindow()
+
+    def _manager_closed(self, _result: int) -> None:
+        self.manager = None
 
     # -- pets -------------------------------------------------------------
 
@@ -68,12 +145,8 @@ class PetApp:
         self.spawn(random.choice(self.assets))
 
     def remove(self, pet: Pet) -> None:
-        if pet in self.pets:
-            self.pets.remove(pet)
-            pet.close()
-            pet.deleteLater()
-        if not self.pets:
-            self.quit()
+        """Send one pet away.  The tray icon keeps the app reachable at zero."""
+        self._retire(pet)
 
     def echo_husband(self, origin: Pet) -> None:
         """The other pets answer a moment later, so they feel like a group."""
@@ -113,6 +186,7 @@ class PetApp:
         menu = QMenu()
         menu.addAction(self.strings["call_husband"]).triggered.connect(
             self._tray_call_husband)
+        menu.addAction(self.strings["manager"]).triggered.connect(self.open_manager)
         menu.addAction(self.strings["add_pet"]).triggered.connect(self.spawn_random)
         menu.addAction(self.strings["reset"]).triggered.connect(self._reset_all)
         menu.addSeparator()
@@ -138,6 +212,8 @@ class PetApp:
     def quit(self) -> None:
         self.timer.stop()
         self.scan_timer.stop()
+        if self.manager is not None:
+            self.manager.close()
         for pet in list(self.pets):
             pet.close()
         self.tray.hide()
@@ -169,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("Desktop Pet")
     app.setQuitOnLastWindowClosed(False)
 
-    pets_dir = Path(args.pets) if args.pets else asset_root() / "pets"
+    pets_dir = Path(args.pets) if args.pets else default_pets_dir()
     PetApp(cfg, pets_dir, args.count)
     return app.exec()
 
