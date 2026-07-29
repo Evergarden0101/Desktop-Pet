@@ -166,7 +166,32 @@ class CharacterDialog(QDialog):
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(mid);")
         form.addRow(hint)
+
+        self.detector_label = QLabel(self._detector_status())
+        self.detector_label.setWordWrap(True)
+        self.detector_label.setStyleSheet("color: palette(mid);")
+        form.addRow(self.detector_label)
         return box
+
+    @staticmethod
+    def _detector_status() -> str:
+        """Tell the user which analysis their imports will get."""
+        from ..rig import detect
+
+        try:
+            import mediapipe  # noqa: F401
+        except Exception:
+            return (
+                "Photos: using outline analysis. Install MediaPipe "
+                "(pip install mediapipe) for much better results from "
+                "photographs of people."
+            )
+        if detect.model_available():
+            return "Photos: using person detection — best quality."
+        return (
+            "Photos: person detection is available; its model (~6 MB) "
+            "downloads automatically the first time you import a picture."
+        )
 
     # ---------------------------------------------------------------- data
     def reload(self, select: Optional[str] = None) -> None:
@@ -265,6 +290,7 @@ class CharacterDialog(QDialog):
         self.path_label.clear()
         self.name_edit.clear()
         self.reload(select=info.name)
+        self.detector_label.setText(self._detector_status())
 
         if QMessageBox.question(
             self,

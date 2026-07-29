@@ -103,6 +103,9 @@ class Silhouette:
     layout: str = "figure"
     #: True when the legs were split by measurement rather than assumed.
     legs_detected: bool = False
+    #: Which analysis produced these landmarks: "outline" (silhouette) or
+    #: "pose" (a detected human). Surfaced so the importer can tell the user.
+    source: str = "outline"
 
     def row_at(self, y: int) -> Optional[RowInfo]:
         index = y - self.box[1]
@@ -382,6 +385,107 @@ def analyze(image) -> Silhouette:
         confident=confident,
         layout=layout,
         legs_detected=legs_detected,
+    )
+
+
+def from_person(image, person) -> Optional[Silhouette]:
+    """Build a :class:`Silhouette` from detected body landmarks.
+
+    This is the reliable path for photographs. The model tells us where the
+    shoulders, hips, knees and ankles actually are, which is exactly what the
+    outline cannot reveal once hair covers the neck and shoulders.
+
+    Two details matter:
+
+    * **The head runs from the top of the hair to the shoulders.** The model
+      locates the *face* (ears, eyes, nose); hair sits above and around it and
+      is part of the character, so the head box is taken from the top of the
+      opaque content down to the shoulder line. Cropping to the face alone is
+      what leaves a pet with half a head.
+    * **Visibility decides the layout.** Landmarks carry a confidence that they
+      are in frame, so a waist-up photo is recognised as having no legs rather
+      than having legs guessed at.
+    """
+    mask, width, _height, box = _binary_mask(image)
+    x0, y0, x1, y1 = box
+    rows = _scan_rows(mask, width, box)
+    body_height = max(1, len(rows))
+
+    shoulder = person.mid_y("shoulder_l", "shoulder_r")
+    if shoulder is None or not person.has("shoulder_l", "shoulder_r"):
+        return None  # without shoulders there is nothing to anchor to
+
+    def clamp_y(value: float) -> int:
+        return int(min(max(value, y0), y1))
+
+    shoulder_y = clamp_y(shoulder)
+    # Head: from the top of the actual artwork (hair included) to the shoulders.
+    head_top = y0
+    head_h = max(6.0, shoulder_y - head_top)
+    neck_y = clamp_y(shoulder_y - head_h * 0.12)
+
+    hip = person.mid_y("hip_l", "hip_r")
+    hips_visible = person.has("hip_l", "hip_r")
+    if hip is not None and hips_visible:
+        hip_y = clamp_y(hip)
+    else:
+        hip_y = clamp_y(head_top + HEADS_TO_HIP * head_h)
+
+    knee = person.mid_y("knee_l", "knee_r")
+    knees_visible = person.has("knee_l", "knee_r")
+    ankle = person.mid_y("ankle_l", "ankle_r")
+    ankles_visible = person.has("ankle_l", "ankle_r")
+
+    # The crotch sits a little below the hip joints.
+    crotch_y = clamp_y(hip_y + head_h * 0.35)
+    waist_y = clamp_y(shoulder_y + (hip_y - shoulder_y) * 0.62)
+
+    if ankle is not None and ankles_visible:
+        foot_top = clamp_y(ankle - head_h * 0.12)
+    elif knee is not None and knees_visible:
+        foot_top = clamp_y(knee + (knee - crotch_y) * 0.85)
+    else:
+        foot_top = y1 - max(2, int((y1 - crotch_y) * 0.14))
+    foot_top = int(min(max(foot_top, crotch_y + 4), y1 - 2))
+
+    # Legs divide between the hip joints.
+    hips_mid = person.mid("hip_l", "hip_r")
+    leg_split_x = hips_mid[0] if hips_mid else (x0 + x1) / 2.0
+    leg_split_x = min(max(leg_split_x, x0 + 2), x1 - 2)
+
+    # Layout: are the legs actually in the picture?
+    leg_fraction = (y1 - crotch_y) / body_height
+    legs_in_frame = knees_visible or ankles_visible
+    layout = "figure"
+    if not legs_in_frame and leg_fraction < 0.30:
+        layout = "cutout"
+    if crotch_y >= y1 - 8:
+        layout = "cutout"
+
+    # Arms are only worth cutting out when the model can see them clearly and
+    # the outline shows a gap - otherwise they stay part of the torso sprite.
+    arm_bounds = _find_arm_bands(
+        rows, shoulder_y - y0, max(shoulder_y - y0 + 1, crotch_y - y0)
+    )
+
+    return Silhouette(
+        box=(x0, y0, x1, y1),
+        rows=rows,
+        head_top=head_top,
+        neck_y=neck_y,
+        shoulder_y=shoulder_y,
+        waist_y=waist_y,
+        hip_y=hip_y,
+        crotch_y=crotch_y,
+        foot_top=foot_top,
+        bottom=y1,
+        leg_split_x=leg_split_x,
+        arms_detached=arm_bounds is not None,
+        arm_bounds=arm_bounds,
+        confident=True,
+        layout=layout,
+        legs_detected=legs_in_frame,
+        source="pose",
     )
 
 

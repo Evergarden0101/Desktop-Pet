@@ -43,6 +43,13 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--backend", choices=["auto", "windows", "null"], help="Desktop backend.")
 
     sub.add_parser("list", help="List installed character packs.")
+    doctor_p = sub.add_parser(
+        "doctor", help="Report what's installed and whether photo import can use a detector."
+    )
+    doctor_p.add_argument(
+        "--download", action="store_true",
+        help="Fetch the pose model now if it isn't cached yet.",
+    )
 
     extract_p = sub.add_parser("extract", help="Extract body parts from an image into a pack.")
     extract_p.add_argument("image", help="Path to the character image (PNG with transparency ideal).")
@@ -74,6 +81,56 @@ def cmd_list() -> int:
         pack = CharacterPack.load(directory)
         tex = "image" if pack.has_texture else "shapes"
         print(f"  - {name:16s} [{tex}]  {directory}")
+    return 0
+
+
+def cmd_doctor(download: bool = False) -> int:
+    """Print a short health report - handy for diagnosing a frozen build."""
+    import platform
+
+    print(f"desktop-pet {__version__}")
+    print(f"  python      {platform.python_version()} on {platform.system()}")
+    print(f"  frozen      {getattr(sys, 'frozen', False)}")
+
+    for label, module in (("Pillow", "PIL"), ("PySide6", "PySide6"), ("numpy", "numpy")):
+        try:
+            __import__(module)
+            print(f"  {label:11s} ok")
+        except Exception as exc:
+            print(f"  {label:11s} MISSING ({exc.__class__.__name__})")
+
+    # Photo import quality hinges on this one.
+    try:
+        import mediapipe  # noqa: F401
+
+        have_lib = True
+    except Exception as exc:
+        have_lib = False
+        print(f"  mediapipe   MISSING ({exc.__class__.__name__})")
+    if have_lib:
+        print("  mediapipe   ok")
+
+    from .rig import detect
+
+    cached = detect.model_available()
+    print(f"  pose model  {'cached' if cached else 'not downloaded'} -> {detect.model_path()}")
+    if download and not cached:
+        print("  downloading pose model...")
+        cached = detect.ensure_model() is not None
+        print(f"  pose model  {'downloaded' if cached else 'DOWNLOAD FAILED'}")
+
+    usable = detect.available(download=False)
+    print()
+    if usable:
+        print("Photo import: using the pose detector (best quality).")
+    elif have_lib:
+        print("Photo import: silhouette only - the pose model isn't cached yet.")
+        print("              It downloads automatically on first import, or run:")
+        print("                  desktop-pet doctor --download")
+    else:
+        print("Photo import: silhouette only (MediaPipe not available).")
+        print("              For much better results from photographs:")
+        print("                  pip install mediapipe")
     return 0
 
 
@@ -135,6 +192,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if command == "list":
         return cmd_list()
+
+    if command == "doctor":
+        return cmd_doctor(download=getattr(args, "download", False))
 
     if command == "extract":
         return cmd_extract(args.image, args.name, args.method, args.scale, args.out)

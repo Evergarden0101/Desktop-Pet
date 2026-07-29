@@ -30,7 +30,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest mediapipe
 
       - name: Run tests (offscreen)
         env:
@@ -52,12 +52,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
+          # Bundled so photo import can find a real person in the picture.
+          pip install mediapipe
 
       - name: Generate application icon
         run: python packaging/make_icon.py
 
       - name: Build executable
         run: pyinstaller --noconfirm --clean packaging/DesktopPet.spec
+
+      - name: Verify the frozen executable
+        # Catches a build that links but cannot actually start, or bundled
+        # dependencies whose data files did not make it into the exe.
+        run: |
+          dist\DesktopPet.exe --version
+          dist\DesktopPet.exe doctor
 
       - name: Build installer (Inno Setup)
         shell: pwsh

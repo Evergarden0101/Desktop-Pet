@@ -3,8 +3,11 @@ PySide6>=6.5
 Pillow>=9.0
 
 # --- Optional extras ---------------------------------------------------------
-# Automatic pose-based body-part extraction (heavier install):
-#   pip install mediapipe numpy
+# Person detection for importing photographs. The shipped DesktopPet.exe
+# bundles this already; install it for source checkouts to get good results
+# from photos of people (without it, import reads the outline instead and can
+# mis-locate the head when hair covers the shoulders):
+#   pip install mediapipe
 #
 # Richer Windows integration / packaging is handled by the stdlib (ctypes,
 # winreg), so pywin32 is NOT required.

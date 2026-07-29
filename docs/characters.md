@@ -99,9 +99,14 @@ forward-compatible.
 
 | `method` | Needs | Notes |
 | --- | --- | --- |
-| `auto_humanoid` | Pillow | Heuristic slice of an upright, front-facing figure. Great starting point. |
+| `auto_humanoid` | Pillow | Best available: person detection if MediaPipe is installed, else silhouette analysis, else proportion bands. |
 | `regions` | Pillow | You give exact rectangles per part — pixel-perfect. `desktop-pet extract` writes these for you (converted from the auto slice) so you can hand-tune them. |
-| `pose` | `mediapipe`, `numpy` | Detects joints and cuts around them; falls back to `auto_humanoid` if MediaPipe isn't installed. |
+| `pose` | `mediapipe`, `numpy` | Same as `auto_humanoid` but makes the intent explicit. Person detection is used automatically whenever it's available. |
+
+**Photographs need the detector.** Reading only the outline, a photo where hair
+falls over the shoulders has its widest upper-body point *inside the hair*, so
+the head is measured far too short and the crop cuts through the face. The pose
+model finds the real shoulders instead. Check yours with `desktop-pet doctor`.
 
 ## The skeleton
 

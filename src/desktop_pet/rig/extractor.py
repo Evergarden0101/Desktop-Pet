@@ -109,6 +109,9 @@ class ExtractionResult:
     skeleton: Optional[List[dict]] = None
     #: "figure" (fully articulated) or "cutout" (head + body only).
     layout: str = "figure"
+    #: Which analysis located the figure: "pose" (a detected human) or
+    #: "outline" (silhouette measurement).
+    detector: str = "outline"
 
     def to_regions_dict(self) -> Dict[str, dict]:
         """Serialize as a ``regions`` extraction block for character.json."""
@@ -217,11 +220,7 @@ def extract_auto_humanoid(image) -> ExtractionResult:
     _require_pillow()
     from . import silhouette as silhouette_mod
 
-    try:
-        shape = silhouette_mod.analyze(image)
-    except Exception:
-        shape = None
-
+    shape = _analyze_best(image)
     if shape is None or not shape.confident:
         return _extract_bands(image, method="auto_humanoid")
 
@@ -239,7 +238,37 @@ def extract_auto_humanoid(image) -> ExtractionResult:
     result.content_box = shape.box
     result.skeleton = skeleton_from_silhouette(shape)
     result.layout = shape.layout
+    result.detector = getattr(shape, "source", "outline")
     return result
+
+
+def _analyze_best(image):
+    """Locate the figure, preferring a real human detector over the outline.
+
+    Photographs defeat outline analysis - hair covering the shoulders makes the
+    widest point of the upper body land inside the hair, so the head comes out
+    half a face tall. When a pose model is installed it is asked first and its
+    landmarks win; otherwise we fall back to reading the silhouette.
+    """
+    from . import detect, silhouette as silhouette_mod
+
+    try:
+        person = detect.detect_person(image)
+    except Exception:
+        person = None
+
+    if person is not None:
+        try:
+            shape = silhouette_mod.from_person(image, person)
+            if shape is not None:
+                return shape
+        except Exception:
+            pass
+
+    try:
+        return silhouette_mod.analyze(image)
+    except Exception:
+        return None
 
 
 def regions_from_silhouette(shape) -> Dict[str, dict]:
@@ -498,71 +527,17 @@ def _extract_bands(image, method: str = "auto_humanoid") -> ExtractionResult:
 
 
 def extract_with_pose(image) -> ExtractionResult:
-    """Extract parts using MediaPipe pose landmarks when available.
+    """Extract using the pose detector explicitly.
 
-    Falls back to :func:`extract_auto_humanoid` if MediaPipe (or its runtime)
-    is not installed, so callers never have to guard the import themselves.
+    ``auto_humanoid`` already prefers the detector when it is installed, so
+    this exists mainly to *require* it: if the model or library is missing the
+    call still succeeds via silhouette analysis, but ``result.detector`` will
+    say so.
     """
     _require_pillow()
-    try:  # pragma: no cover - exercised only where mediapipe is installed
-        import numpy as np
-        import mediapipe as mp
-    except Exception:
-        return extract_auto_humanoid(image)
-
-    # pragma: no cover below - requires the optional heavy dependency.
-    rgb = image.convert("RGB")
-    frame = np.asarray(rgb)
-    with mp.solutions.pose.Pose(static_image_mode=True) as pose:  # type: ignore
-        result = pose.process(frame)
-    if not result.pose_landmarks:
-        return extract_auto_humanoid(image)
-
-    lm = result.pose_landmarks.landmark
-    w, h = rgb.size
-
-    def px(idx) -> Vec2:
-        p = lm[idx]
-        return Vec2(p.x * w, p.y * h)
-
-    P = mp.solutions.pose.PoseLandmark  # type: ignore
-    # Derive rectangles from landmark pairs; padded so limbs aren't clipped.
-    regions = _regions_from_landmarks(px, P, w, h)
-    result_obj = extract_regions(image, regions)
-    result_obj.method = "pose"
-    return result_obj
-
-
-def _regions_from_landmarks(px, P, w, h) -> Dict[str, dict]:  # pragma: no cover
-    """Translate MediaPipe landmarks into part rectangles (helper for pose)."""
-
-    def rect_between(a: Vec2, b: Vec2, pad: float) -> List[int]:
-        x0 = min(a.x, b.x) - pad
-        y0 = min(a.y, b.y) - pad
-        x1 = max(a.x, b.x) + pad
-        y1 = max(a.y, b.y) + pad
-        return [int(x0), int(y0), int(x1), int(y1)]
-
-    pad = 0.04 * h
-    shoulder_l, shoulder_r = px(P.LEFT_SHOULDER), px(P.RIGHT_SHOULDER)
-    hip_l, hip_r = px(P.LEFT_HIP), px(P.RIGHT_HIP)
-    return {
-        "head": rect_between(px(P.LEFT_EAR), px(P.RIGHT_EAR), pad * 1.6),
-        "torso": rect_between(shoulder_l, hip_r, pad),
-        "hips": rect_between(hip_l, hip_r, pad),
-        "upper_arm_l": rect_between(shoulder_l, px(P.LEFT_ELBOW), pad),
-        "forearm_l": rect_between(px(P.LEFT_ELBOW), px(P.LEFT_WRIST), pad),
-        "hand_l": rect_between(px(P.LEFT_WRIST), px(P.LEFT_INDEX), pad),
-        "upper_arm_r": rect_between(shoulder_r, px(P.RIGHT_ELBOW), pad),
-        "forearm_r": rect_between(px(P.RIGHT_ELBOW), px(P.RIGHT_WRIST), pad),
-        "hand_r": rect_between(px(P.RIGHT_WRIST), px(P.RIGHT_INDEX), pad),
-        "thigh_l": rect_between(hip_l, px(P.LEFT_KNEE), pad),
-        "shin_l": rect_between(px(P.LEFT_KNEE), px(P.LEFT_ANKLE), pad),
-        "foot_l": rect_between(px(P.LEFT_ANKLE), px(P.LEFT_FOOT_INDEX), pad),
-        "thigh_r": rect_between(hip_r, px(P.RIGHT_KNEE), pad),
-        "shin_r": rect_between(px(P.RIGHT_KNEE), px(P.RIGHT_ANKLE), pad),
-        "foot_r": rect_between(px(P.RIGHT_ANKLE), px(P.RIGHT_FOOT_INDEX), pad),
-    }
+    result = extract_auto_humanoid(image)
+    result.method = "pose"
+    return result
 
 
 def extract(image, method: str = "auto_humanoid", **kwargs) -> ExtractionResult:

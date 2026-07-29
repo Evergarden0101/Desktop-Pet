@@ -13,7 +13,7 @@ The result is a single-folder app under ``dist/DesktopPet`` and, because
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ROOT = os.path.abspath(os.getcwd())
 SRC = os.path.join(ROOT, "src")
@@ -28,12 +28,28 @@ datas = [
 
 hiddenimports = collect_submodules("desktop_pet")
 
+# MediaPipe powers photo import (finding a real person in the picture). It is
+# optional: when it isn't installed at build time the exe simply falls back to
+# silhouette analysis, so the build must not fail without it. Its graphs and
+# .tflite models live in the package as data, which PyInstaller cannot infer.
+binaries = []
+try:
+    import mediapipe  # noqa: F401
+
+    datas += collect_data_files("mediapipe", include_py_files=True)
+    binaries += collect_dynamic_libs("mediapipe")
+    hiddenimports += collect_submodules("mediapipe.tasks")
+    hiddenimports += ["mediapipe", "numpy"]
+    print("[spec] bundling mediapipe for photo import")
+except Exception as exc:  # pragma: no cover - build-time only
+    print(f"[spec] mediapipe not available, photo import will use silhouette only ({exc})")
+
 a = Analysis(
     # Absolute-import entry point (NOT desktop_pet/__main__.py, whose relative
     # import fails when PyInstaller runs it as the top-level __main__ script).
     [os.path.join(ROOT, "packaging", "app_entry.py")],
     pathex=[SRC],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

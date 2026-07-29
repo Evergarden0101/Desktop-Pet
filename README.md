@@ -95,6 +95,9 @@ python run.py
 | **Right-click** the pet | Context menu: actions, size, character, feed, settings… |
 | **Tray icon** | Same menu; double-click to make all pets wave |
 
+Run `desktop-pet doctor` (or `DesktopPet.exe doctor`) for a health report:
+Python/Qt/Pillow status and whether photo import can use person detection.
+
 From the menu you can make it **climb the nearest edge**, **creep**, **sit**,
 **sleep**, follow the cursor, add more pets, change size/character, and open
 **Settings**. Left to its own devices, the pet's *autonomy brain* wanders,
@@ -141,12 +144,26 @@ python run.py extract hero.png --name Hero
 python run.py run --character Hero
 ```
 
+How a picture is analysed:
+
+1. **Person detection (photographs).** If [MediaPipe](https://github.com/google-ai-edge/mediapipe)
+   is available, a pose model locates the real shoulders, hips, knees and
+   ankles — with a confidence per point, so a waist-up shot is *known* to have
+   no legs rather than having them guessed. This is what stops a photo's head
+   crop from slicing the face in half when hair covers the shoulders. The
+   shipped `DesktopPet.exe` bundles it; for a source checkout run
+   `pip install mediapipe`. The ~6 MB model downloads once on first import.
+2. **Silhouette analysis (drawings).** Otherwise the image's outline is
+   measured — neck, shoulders, hips and the gap between the legs — and cuts
+   follow those landmarks. Adapts to chibi, tall or arms-out artwork.
+3. **Proportion bands.** A last-resort fallback for shapes that aren't figures.
+
+Either way the character's bone proportions come from the drawing, so imports
+keep their own build. Run `desktop-pet doctor` to see which path you'll get.
+
 Extraction strategies (`--method`):
 
-- `auto_humanoid` *(default)* — analyses the image's silhouette to locate the
-  neck, shoulders, hips and legs, then cuts along them. Adapts to chibi, tall or
-  arms-out artwork, and derives the character's bone proportions from the
-  drawing. Zero extra dependencies.
+- `auto_humanoid` *(default)* — the chain above, best available first.
 - `regions` — you specify exact rectangles per part in `character.json`
   (pixel-perfect; best for hand-authored characters).
 - `pose` — uses **MediaPipe** pose landmarks if installed

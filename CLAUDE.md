@@ -42,7 +42,8 @@ src/desktop_pet/
 ├── rig/
 │   ├── body_parts.py    BodyPart, the default humanoid BoneSpec rig
 │   ├── extractor.py     Cut a character image into parts (regions/auto/pose)
-│   ├── silhouette.py    Alpha-mask analysis: neck/shoulder/hip/leg landmarks
+│   ├── detect.py        Optional MediaPipe pose detection (people in photos)
+│   ├── silhouette.py    Alpha-mask analysis + landmarks from detected poses
 │   ├── poses.py         PoseLibrary: procedural poses (walk, climb, creep, ...)
 │   ├── skeleton_utils.py  Derived measurements (foot-plant offset, span)
 │   └── loader.py        CharacterPack -> skeleton + extracted parts
@@ -174,6 +175,12 @@ GitHub Release.
 - **New mode:** add an entry to `behaviors/autonomy.py::MODE_WEIGHTS` (weight
   multipliers per behaviour) plus a label in `MODE_LABELS`; menus and the
   settings dialog pick it up automatically.
+- **Import analysis order** (`rig/extractor.py::_analyze_best`): pose detection
+  (`rig/detect.py`, optional) -> silhouette outline -> proportion bands. The
+  detector is always optional and every failure path returns `None`, so import
+  never breaks when MediaPipe or its model is absent. Photos *need* it: an
+  outline cannot find shoulders under long hair, and the head crop then cuts
+  through the face.
 - **New character:** drop a folder in the user characters dir with a
   `character.json` (+ optional `texture.png`). See `docs/characters.md`.
 - **New platform backend:** implement `PlatformBackend.snapshot()` and wire it

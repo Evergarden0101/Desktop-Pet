@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "desktop-pet"
-version = "1.3.0"
+version = "1.4.0"
 description = "A highly interactive, customizable desktop pet for Windows with skeletal body-part animation, window climbing, and creeping."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -27,8 +27,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Optional pose-estimation backend for automatic body-part extraction.
-pose = ["mediapipe>=0.10", "numpy>=1.23"]
+# Person detection for importing photographs. Strongly recommended: without it
+# photo import falls back to reading the outline, which mis-locates the head on
+# pictures where hair covers the shoulders.
+detect = ["mediapipe>=0.10", "numpy>=1.23"]
+pose = ["mediapipe>=0.10", "numpy>=1.23"]  # legacy alias
 # Start-on-login registration and richer Windows integration.
 windows = ["pywin32>=305"]
 dev = ["pytest>=7.0", "pyinstaller>=6.0"]

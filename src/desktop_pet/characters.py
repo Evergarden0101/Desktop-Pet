@@ -42,6 +42,8 @@ class CharacterInfo:
     has_texture: bool
     part_count: int
     author: str = ""
+    #: "pose" when a person detector located the figure, else "outline".
+    detector: str = ""
 
     @property
     def can_delete(self) -> bool:
